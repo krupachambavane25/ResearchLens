@@ -2,7 +2,6 @@
 
 ResearchLens is a research-paper analysis app that runs locally or as a cloud service. It extracts text from uploaded PDFs, lets you define custom analysis prompts, compares selected papers, and (when configured) uses Gemini for evidence-grounded summaries and candidate research-gap discovery.
 
-> The Stage 2 project report and sample papers mentioned in the request were not available in the supplied workspace. The attached brief is the requirements source used here; see [docs/requirements-mapping.md](docs/requirements-mapping.md) for the traceable checklist and engineering decisions.
 
 ## What is implemented
 

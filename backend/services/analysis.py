@@ -18,6 +18,8 @@ The comparison value is an array of {criterion, findings}; each finding is
 For each research gap provide title, description, confidence (0-1), evidence (array of
 {paper_id, paper_title, excerpt, page_number}), counter_evidence (array of strings), and
 uncertainty. Every gap must be supported by exact short excerpts from supplied material.
+Use the marked PDF page number for evidence when the source includes page markers.
+Keep each excerpt within a single page. Set page_number to null when page provenance is unavailable.
 If evidence is insufficient, return no gaps and explain that limitation.
 Distinguish extracted facts from interpretations. Avoid unsupported conclusions."""
 
@@ -76,14 +78,40 @@ def build_local_analysis(
                     "Local extraction preview only; configure Gemini for AI-generated analysis. "
                     f"Extracted {paper.word_count:,} words from {paper.page_count} pages."
                 ),
-                "objectives": _snippet(paper, "objectives", "Not confidently extracted from headings."),
-                "methodology": _snippet(paper, "methodology", "Not confidently extracted from headings."),
-                "datasets": _snippet(paper, "datasets", "Not confidently extracted from headings."),
-                "results": _snippet(paper, "results", "Not confidently extracted from headings."),
-                "limitations": _snippet(paper, "limitations", "Not confidently extracted from headings."),
-                "future_work": _snippet(paper, "future_work", "Not confidently extracted from headings."),
+                "objectives": _snippet(paper, "objectives", "Not found in document"),
+                "methodology": _snippet(paper, "methodology", "Not found in document"),
+                "datasets": _snippet(paper, "datasets", "Not found in document"),
+                "results": _snippet(paper, "results", "Not found in document"),
+                "limitations": _snippet(paper, "limitations", "Not found in document"),
+                "future_work": _snippet(paper, "future_work", "Not found in document"),
             }
         )
+    comparison_sections = {
+        "Research objective": "objectives",
+        "Methodology": "methodology",
+        "Algorithm": None,
+        "Dataset": "datasets",
+        "Evaluation metrics": None,
+        "Results": "results",
+        "Limitations": "limitations",
+        "Future work": "future_work",
+    }
+    comparison = [
+        {
+            "criterion": criterion,
+            "findings": [
+                {
+                    "paper_id": paper.id,
+                    "paper_title": paper.title,
+                    "finding": _snippet(paper, section, "Not found in document")
+                    if section
+                    else "Not found in document",
+                }
+                for paper in papers
+            ],
+        }
+        for criterion, section in comparison_sections.items()
+    ]
     similarities: dict[str, float] = {}
     for i, first in enumerate(papers):
         for second in papers[i + 1 :]:
@@ -99,7 +127,7 @@ def build_local_analysis(
         ),
         "executive_summary": "Local PDF extraction completed. Configure an API key to run evidence-grounded AI analysis.",
         "paper_summaries": summaries,
-        "comparison": [],
+        "comparison": comparison,
         "similarities": [
             {
                 "paper_ids": key.split(":"),
@@ -232,13 +260,30 @@ def validate_ai_result(result: Any, papers: list[Paper]) -> dict[str, Any]:
                 continue
             paper = allowed[item["paper_id"]]
             excerpt = str(item.get("excerpt", "")).strip()
-            if excerpt and excerpt.casefold() in paper.extracted_text.casefold():
+            page_number = None
+            page_texts = paper.page_texts or []
+            if excerpt and page_texts:
+                page_number = next(
+                    (
+                        index
+                        for index, page_text in enumerate(page_texts, start=1)
+                        if excerpt.casefold() in page_text.casefold()
+                    ),
+                    None,
+                )
+                if page_number is None:
+                    continue
+            elif excerpt and excerpt.casefold() in paper.extracted_text.casefold():
+                page_number = None
+            else:
+                continue
+            if excerpt:
                 evidence.append(
                     {
                         "paper_id": paper.id,
                         "paper_title": paper.title,
                         "excerpt": excerpt[:600],
-                        "page_number": None,
+                        "page_number": page_number,
                     }
                 )
         if evidence:

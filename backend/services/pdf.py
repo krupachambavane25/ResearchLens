@@ -29,6 +29,11 @@ class PDFValidationError(ValueError):
 
 
 def extract_pdf(data: bytes, filename: str) -> tuple[str, int]:
+    pages, page_count = extract_pdf_pages(data, filename)
+    return "\n".join(pages), page_count
+
+
+def extract_pdf_pages(data: bytes, filename: str) -> tuple[list[str], int]:
     if not data:
         raise PDFValidationError("The uploaded file is empty.")
     if not filename.lower().endswith(".pdf") or not data.startswith(b"%PDF-"):
@@ -40,21 +45,21 @@ def extract_pdf(data: bytes, filename: str) -> tuple[str, int]:
             raise PDFValidationError(
                 "Encrypted PDFs are not supported. Remove password protection before uploading."
             )
-        text = "\n".join(page.get_text("text") for page in document)
         page_count = document.page_count
+        if page_count > 300:
+            document.close()
+            raise PDFValidationError("PDFs are limited to 300 pages.")
+        pages = [clean_text(page.get_text("text")) for page in document]
         document.close()
     except PDFValidationError:
         raise
     except (pymupdf.FileDataError, RuntimeError, ValueError) as exc:
         raise PDFValidationError("The PDF could not be opened or is malformed.") from exc
-    cleaned = clean_text(text)
-    if not cleaned.strip():
+    if not any(page.strip() for page in pages):
         raise PDFValidationError(
             "No selectable text was found. Scanned PDFs require OCR, which is not enabled."
         )
-    if page_count > 300:
-        raise PDFValidationError("PDFs are limited to 300 pages.")
-    return cleaned, page_count
+    return pages, page_count
 
 
 def clean_text(text: str) -> str:

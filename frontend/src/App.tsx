@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { NavLink, Route, Routes, useLocation, useParams, useSearchParams } from 'react-router-dom'
+import { Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
-  Activity, ArrowDownToLine, ArrowRight, BookOpen, ChartNoAxesCombined, Check,
+  Activity, ArrowDownToLine, ArrowRight, BarChart3, BookOpen, ChartNoAxesCombined, Check,
   ChevronDown, CircleHelp, Clock3, FilePlus2, FileText, FlaskConical, FolderOpen,
-  Gauge, LayoutDashboard, Menu, Search, Settings, ShieldCheck, Sparkles, Upload, X,
+  LayoutDashboard, Menu, MessageCircle, Search, Settings, ShieldCheck, Sparkles, Trash2, Upload, X,
 } from 'lucide-react'
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { api, setAuthToken, type Analysis, type Paper, type SupportingDocument } from './api'
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { api, setAuthToken, type Analysis, type AssistantConversation, type Paper, type Project, type SupportingDocument } from './api'
 import './styles.css'
 
 type ToastState = { message: string; kind: 'success' | 'error' } | null
@@ -50,6 +50,7 @@ function App() {
   const [papers, setPapers] = useState<Paper[]>([])
   const [documents, setDocuments] = useState<SupportingDocument[]>([])
   const [analyses, setAnalyses] = useState<Analysis[]>([])
+  const [projects, setProjects] = useState<Project[]>([])
   const [aiEnabled, setAiEnabled] = useState(false)
   const [toast, setToast] = useState<ToastState>(null)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -58,14 +59,16 @@ function App() {
   const [authError, setAuthError] = useState('')
   const googleButton = useRef<HTMLDivElement>(null)
   const location = useLocation()
+  const navigate = useNavigate()
 
   const refresh = useCallback(async () => {
-    const [paperList, documentList, analysisList, health] = await Promise.all([
-      api.papers(), api.documents(), api.analyses(), api.health(),
+    const [paperList, documentList, analysisList, projectList, health] = await Promise.all([
+      api.papers(), api.documents(), api.analyses(), api.projects(), api.health(),
     ])
     setPapers(paperList)
     setDocuments(documentList)
     setAnalyses(analysisList)
+    setProjects(projectList)
     setAiEnabled(health.live_ai_enabled)
   }, [])
 
@@ -140,11 +143,15 @@ function App() {
     }
   }, [location, toast])
 
-  const pageTitle = navigation.find((item) => item.to === location.pathname)?.label || (location.pathname.startsWith('/papers/') ? 'Paper detail' : 'Analysis results')
+  const pageTitle = location.pathname === '/analysis'
+    ? location.search.includes('tab=compare') ? 'Compare papers' : 'Custom analysis'
+    : navigation.find((item) => item.to.split('?')[0] === location.pathname)?.label
+      || (location.pathname.startsWith('/papers/') ? 'Paper detail' : location.pathname.startsWith('/results/') ? 'Analysis results' : 'ResearchLens')
   const onUpload = async (files: File[]) => {
     const result = await api.upload(files)
     await refresh()
     setToast({ message: `${result.papers.length} paper${result.papers.length === 1 ? '' : 's'} added to your library.`, kind: 'success' })
+    navigate('/analysis?tab=compare')
   }
   const onDelete = async (id: string) => {
     await api.removePaper(id)
@@ -199,13 +206,16 @@ function App() {
         </div>
         <div className="workspace-switch">
           <div className="workspace-icon">R</div>
-          <div className="workspace-name"><b>My workspace</b><small>Personal library</small></div>
+          <div className="workspace-name"><b>My workspace</b><small>{projects.length} research projects</small></div>
           <ChevronDown size={15} />
         </div>
         <p className="nav-caption">WORKSPACE</p>
         <nav className="main-nav" aria-label="Main navigation">
           {navigation.map(({ label, to, icon: Icon }) => (
-            <NavLink className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} key={to} to={to} end={to === '/'}>
+            <NavLink className={({ isActive }) => {
+              const selectedTab = to.includes('tab=compare') ? location.search.includes('tab=compare') : to.includes('tab=custom') ? !location.search.includes('tab=compare') : false
+              return `nav-item ${location.pathname === '/analysis' && to.startsWith('/analysis?') ? selectedTab ? 'active' : '' : isActive ? 'active' : ''}`
+            }} key={to} to={to} end={to === '/'}>
               <Icon size={17} strokeWidth={1.8} /><span>{label}</span>
               {label === 'Library' && papers.length > 0 && <span className="nav-count">{papers.length}</span>}
             </NavLink>
@@ -238,13 +248,18 @@ function App() {
         <div className="page-container">
           <Routes>
             <Route path="/" element={<Dashboard papers={papers} analyses={analyses} aiEnabled={aiEnabled} />} />
+            <Route path="/analytics" element={<AnalyticsPage papers={papers} analyses={analyses} />} />
             <Route path="/upload" element={<UploadPage papers={papers} onUpload={onUpload} />} />
             <Route path="/library" element={<LibraryPage papers={papers} onDelete={onDelete} />} />
             <Route path="/papers/:id" element={<PaperDetailPage />} />
-            <Route path="/analysis" element={<CustomAnalysis papers={papers} documents={documents} onUploadDocuments={onUploadDocuments} onAnalyze={onAnalyze} onDownloadReport={onDownloadReport} />} />
+            <Route path="/analysis" element={<CustomAnalysis papers={papers} projects={projects} documents={documents} onUploadDocuments={onUploadDocuments} onAnalyze={onAnalyze} onDownloadReport={onDownloadReport} />} />
+            <Route path="/compare" element={<Navigate to="/analysis?tab=compare" replace />} />
+            <Route path="/assistant" element={<AssistantPage papers={papers} aiEnabled={aiEnabled} />} />
+            <Route path="/projects" element={<ProjectsPage papers={papers} projects={projects} analyses={analyses} onRefresh={refresh} />} />
+            <Route path="/reports" element={<ReportsPage analyses={analyses} onDownloadReport={onDownloadReport} />} />
             <Route path="/history" element={<HistoryPage analyses={analyses} />} />
             <Route path="/results/:id" element={<ResultPage analyses={analyses} onDownloadReport={onDownloadReport} />} />
-            <Route path="/settings" element={<SettingsPage aiEnabled={aiEnabled} />} />
+            <Route path="/settings" element={<SettingsPage aiEnabled={aiEnabled} userEmail={userEmail} authenticated={Boolean(googleClientId)} />} />
             <Route path="*" element={<Dashboard papers={papers} analyses={analyses} aiEnabled={aiEnabled} />} />
           </Routes>
         </div>
@@ -257,9 +272,14 @@ function App() {
 
 const navigation = [
   { label: 'Overview', to: '/', icon: LayoutDashboard },
+  { label: 'Analytics', to: '/analytics', icon: BarChart3 },
   { label: 'Upload papers', to: '/upload', icon: FilePlus2 },
   { label: 'Library', to: '/library', icon: FolderOpen },
-  { label: 'Custom analysis', to: '/analysis', icon: FlaskConical },
+  { label: 'Projects', to: '/projects', icon: BookOpen },
+  { label: 'Compare papers', to: '/analysis?tab=compare', icon: FlaskConical },
+  { label: 'Custom analysis', to: '/analysis?tab=custom', icon: FlaskConical },
+  { label: 'Research assistant', to: '/assistant', icon: MessageCircle },
+  { label: 'Reports', to: '/reports', icon: FileText },
   { label: 'Analysis history', to: '/history', icon: Clock3 },
 ]
 
@@ -299,6 +319,187 @@ function Dashboard({ papers, analyses, aiEnabled }: { papers: Paper[]; analyses:
       <section className="insight-strip"><div className="insight-icon"><ShieldCheck size={18} /></div><div><b>Evidence over assumptions</b><span>Potential research gaps are linked to passages in your uploaded papers—not presented as proof of worldwide novelty.</span></div><NavLink to="/settings">Learn about the workflow <ArrowRight size={14} /></NavLink></section>
     </>
   )
+}
+
+function AnalyticsPage({ papers, analyses }: { papers: Paper[]; analyses: Analysis[] }) {
+  const gapsByPaper = new Map<string, number>()
+  const methodCounts = new Map<string, number>()
+  const similarityRows: { pair: string; score: number }[] = []
+  analyses.forEach((analysis) => {
+    const names = new Map((analysis.result.papers_analyzed || []).map((paper: any) => [paper.paper_id, paper.title]))
+    ;(analysis.result.research_gaps || []).forEach((gap: any) => {
+      ;(gap.evidence || []).forEach((evidence: any) => {
+        const title = evidence.paper_title || names.get(evidence.paper_id) || 'Source paper'
+        gapsByPaper.set(title, (gapsByPaper.get(title) || 0) + 1)
+      })
+    })
+    ;(analysis.result.paper_summaries || []).forEach((summary: any) => {
+      const methodology = String(summary.methodology || '').trim()
+      if (methodology && !/not confidently extracted/i.test(methodology)) {
+        const label = methodology.length > 50 ? `${methodology.slice(0, 47)}…` : methodology
+        methodCounts.set(label, (methodCounts.get(label) || 0) + 1)
+      }
+    })
+    ;(analysis.result.similarities || []).forEach((entry: any) => {
+      if (typeof entry.score === 'number') {
+        similarityRows.push({
+          pair: (entry.paper_titles || entry.paper_ids || []).join(' ↔ '),
+          score: Math.round(entry.score * 100),
+        })
+      }
+    })
+  })
+  const evidenceData = [...gapsByPaper.entries()].map(([name, citations]) => ({ name, citations })).sort((a, b) => b.citations - a.citations).slice(0, 8)
+  const methodData = [...methodCounts.entries()].map(([name, papersCount]) => ({ name, papers: papersCount })).sort((a, b) => b.papers - a.papers).slice(0, 8)
+  const activity = analyses.slice(0, 12).reverse().map((analysis) => ({
+    date: new Date(analysis.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+    gaps: analysis.result.research_gaps?.length || 0,
+    papers: analysis.result.papers_analyzed?.length || analysis.result.paper_summaries?.length || 0,
+  }))
+  return <>
+    <PageHeading eyebrow="RESEARCH LANDSCAPE" title="Analytics" description="Explore counts and comparisons derived from your saved papers and analyses. Charts stay empty when there is no evidence to plot." action={<NavLink to="/analysis" className="button primary"><Sparkles size={15} /> Run analysis</NavLink>} />
+    <section className="metric-grid">
+      <Metric icon={<BookOpen size={17} />} label="Papers in library" value={papers.length.toString()} note="Available to analyze" color="blue" />
+      <Metric icon={<Activity size={17} />} label="Saved analyses" value={analyses.length.toString()} note="Available in history" color="purple" />
+      <Metric icon={<ShieldCheck size={17} />} label="Evidence-linked gaps" value={analyses.reduce((total, analysis) => total + (analysis.result.research_gaps || []).length, 0).toString()} note="From saved AI analyses" color="amber" />
+      <Metric icon={<ChartNoAxesCombined size={17} />} label="Similarity pairs" value={similarityRows.length.toString()} note="Observed comparisons" color="green" />
+    </section>
+    {analyses.length === 0 ? <EmptyState icon={<BarChart3 size={20} />} title="Your analytics will appear here" detail="Run an analysis on your uploaded papers to generate real comparison and evidence data." link="/analysis" linkText="Start an analysis" /> : <div className="analytics-grid">
+      <section className="panel analytics-panel"><div className="panel-heading"><div><span className="eyebrow">SAVED ANALYSES</span><h2>Paper and gap counts</h2></div><span className="chart-caption">Observed values</span></div><div className="analytics-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={activity}><defs><linearGradient id="analyticsFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#6558df" stopOpacity={0.2} /><stop offset="100%" stopColor="#6558df" stopOpacity={0.02} /></linearGradient></defs><CartesianGrid stroke="#edf0f4" vertical={false} /><XAxis dataKey="date" axisLine={false} tickLine={false} /><YAxis allowDecimals={false} axisLine={false} tickLine={false} /><Tooltip /><Area type="monotone" dataKey="papers" name="Papers analyzed" stroke="#6558df" fill="url(#analyticsFill)" /><Area type="monotone" dataKey="gaps" name="Candidate gaps" stroke="#e2a640" fill="transparent" /></AreaChart></ResponsiveContainer></div></section>
+      <AnalyticsChart title="Evidence mentions by paper" subtitle="Citations attached to candidate gaps" rows={evidenceData} dataKey="citations" empty="No gap evidence was recorded in saved analyses." />
+      <AnalyticsChart title="Extracted methodology signals" subtitle="Methodology text present in saved paper summaries" rows={methodData} dataKey="papers" empty="No methodology summaries are available yet." />
+      <AnalyticsChart title="Paper similarity pairs" subtitle="Scores from saved comparisons; not a novelty measure" rows={similarityRows.slice(0, 8)} dataKey="score" empty="Run a multi-paper analysis with AI enabled to record similarity pairs." />
+    </div>}
+    <p className="config-footnote analytics-disclaimer">Counts describe saved analysis outputs only. They are not an exhaustive or globally representative map of the literature.</p>
+  </>
+}
+
+function AnalyticsChart({ title, subtitle, rows, dataKey, empty }: { title: string; subtitle: string; rows: Record<string, any>[]; dataKey: string; empty: string }) {
+  return <section className="panel analytics-panel"><div className="panel-heading"><div><span className="eyebrow">FROM YOUR DATA</span><h2>{title}</h2><p>{subtitle}</p></div></div>{rows.length ? <div className="analytics-chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={rows} layout="vertical" margin={{ left: 15, right: 20 }}><CartesianGrid stroke="#edf0f4" horizontal={false} /><XAxis type="number" allowDecimals={false} axisLine={false} tickLine={false} /><YAxis type="category" dataKey="name" width={130} axisLine={false} tickLine={false} tick={{ fontSize: 10 }} /><Tooltip /><Bar dataKey={dataKey} name={dataKey === 'score' ? 'Similarity (%)' : dataKey === 'citations' ? 'Evidence mentions' : 'Papers'} fill="#6558df" radius={[0, 4, 4, 0]} /></BarChart></ResponsiveContainer></div> : <div className="chart-empty">{empty}</div>}</section>
+}
+
+function ProjectsPage({ papers, projects, analyses, onRefresh }: { papers: Paper[]; projects: Project[]; analyses: Analysis[]; onRefresh: () => Promise<void> }) {
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const create = async (event: React.FormEvent) => {
+    event.preventDefault()
+    setBusy(true); setError('')
+    try {
+      await api.createProject({ name, description })
+      setName(''); setDescription('')
+      await onRefresh()
+    } catch (reason) {
+      setError((reason as Error).message)
+    } finally { setBusy(false) }
+  }
+  return <>
+    <PageHeading eyebrow="ORGANIZE YOUR WORK" title="Research projects" description="Group papers by research question. Project membership is saved with your account and does not duplicate uploaded files." />
+    <form className="panel project-create" onSubmit={(event) => void create(event)}>
+      <div><span className="eyebrow">NEW PROJECT</span><h2>Create a research project</h2></div>
+      <div className="project-create-fields"><label className="field-label">Project name<input required maxLength={120} value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Multilingual evaluation" /></label><label className="field-label">Description<input maxLength={2000} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Research question or scope (optional)" /></label><button className="button primary" disabled={busy || !name.trim()}><FolderOpen size={15} /> Create project</button></div>
+      {error && <p className="inline-error" role="alert">{error}</p>}
+    </form>
+    {!projects.length ? <EmptyState icon={<FolderOpen size={20} />} title="No projects yet" detail={papers.length ? 'Create a project, then select papers from your library to organize them.' : 'Upload papers and create a project to begin organizing your research.'} link={papers.length ? '/library' : '/upload'} linkText={papers.length ? 'View paper library' : 'Upload papers'} /> : <div className="project-grid">{projects.map((project) => <ProjectCard key={project.id} project={project} papers={papers} analyses={analyses.filter((analysis) => project.analysis_ids.includes(analysis.id))} onRefresh={onRefresh} />)}</div>}
+  </>
+}
+
+function ProjectCard({ project, papers, analyses, onRefresh }: { project: Project; papers: Paper[]; analyses: Analysis[]; onRefresh: () => Promise<void> }) {
+  const [name, setName] = useState(project.name)
+  const [description, setDescription] = useState(project.description)
+  const [selected, setSelected] = useState<string[]>(project.paper_ids)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  useEffect(() => { setName(project.name); setDescription(project.description); setSelected(project.paper_ids) }, [project])
+  const save = async () => {
+    setBusy(true); setError('')
+    try {
+      await api.updateProject(project.id, { name, description })
+      await api.assignProjectPapers(project.id, selected)
+      await onRefresh()
+    } catch (reason) { setError((reason as Error).message) } finally { setBusy(false) }
+  }
+  const remove = async () => {
+    if (!window.confirm(`Delete project “${project.name}”? Papers will remain in your library, unassigned.`)) return
+    setBusy(true); setError('')
+    try { await api.deleteProject(project.id); await onRefresh() } catch (reason) { setError((reason as Error).message) } finally { setBusy(false) }
+  }
+  return <section className="panel project-card"><div className="panel-heading"><div className="project-card-icon"><FolderOpen size={17} /></div><span className="library-total">{selected.length} papers · {analyses.length} analyses</span></div><label className="field-label">Project name<input maxLength={120} value={name} onChange={(event) => setName(event.target.value)} /></label><label className="field-label project-description">Description<input maxLength={2000} value={description} onChange={(event) => setDescription(event.target.value)} /></label><div className="project-paper-select"><b>Paper membership</b>{papers.length ? papers.map((paper) => <label key={paper.id}><input type="checkbox" checked={selected.includes(paper.id)} onChange={() => setSelected((ids) => ids.includes(paper.id) ? ids.filter((id) => id !== paper.id) : [...ids, paper.id])} /><span>{paper.title}</span></label>) : <small>Upload papers to add them to this project.</small>}</div>{analyses.length > 0 && <div className="project-analyses"><b>Saved analyses</b>{analyses.map((analysis) => <NavLink key={analysis.id} to={`/results/${analysis.id}`}>{analysis.prompt}<ArrowRight size={12} /></NavLink>)}</div>}<div className="project-actions"><button className="button secondary small-button" disabled={busy} onClick={() => void save()}>Save project</button><button className="text-button danger-text" disabled={busy} onClick={() => void remove()}>Delete</button></div>{error && <p className="inline-error" role="alert">{error}</p>}</section>
+}
+
+function AssistantPage({ papers, aiEnabled }: { papers: Paper[]; aiEnabled: boolean }) {
+  const [threads, setThreads] = useState<AssistantConversation[]>([])
+  const [conversation, setConversation] = useState<AssistantConversation | null>(null)
+  const [selected, setSelected] = useState<string[]>([])
+  const [question, setQuestion] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const loadThreads = useCallback(async () => setThreads(await api.assistantConversations()), [])
+  useEffect(() => { void loadThreads().catch((reason: Error) => setError(reason.message)) }, [loadThreads])
+  useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }) }, [conversation?.messages.length, busy])
+  const startNew = () => { setConversation(null); setSelected([]); setQuestion(''); setError('') }
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!question.trim() || !selected.length) return
+    setBusy(true); setError('')
+    try {
+      const updated = await api.assistantChat({ question: question.trim(), paper_ids: selected, conversation_id: conversation?.id })
+      setConversation(updated); setQuestion('')
+      await loadThreads()
+    } catch (reason) { setError((reason as Error).message) } finally { setBusy(false) }
+  }
+  const openThread = (thread: AssistantConversation) => {
+    setConversation(thread); setSelected(thread.paper_ids); setError('')
+  }
+  const deleteThread = async (thread: AssistantConversation) => {
+    if (!window.confirm(`Delete this conversation, “${thread.title}”?`)) return
+    setError('')
+    try {
+      await api.deleteAssistantConversation(thread.id)
+      if (conversation?.id === thread.id) startNew()
+      await loadThreads()
+    } catch (reason) { setError((reason as Error).message) }
+  }
+  return <>
+    <PageHeading eyebrow="PAPER-GROUNDED CHAT" title="Research assistant" description="Ask questions about selected papers. Answers are generated from retrieved excerpts and show the passages used." action={<button className="button secondary" onClick={startNew}><MessageCircle size={15} /> New chat</button>} />
+    {!aiEnabled && <div className="mode-banner"><div className="mode-icon"><ShieldCheck size={17} /></div><div><b>AI assistant unavailable in local mode</b><span>Configure GEMINI_API_KEY on the backend to ask questions. The assistant will not produce demo answers.</span></div><NavLink to="/settings">Settings <ArrowRight size={14} /></NavLink></div>}
+    <div className="assistant-layout">
+      <aside className="panel assistant-history"><div className="panel-heading"><h2>Conversations</h2><button className="icon-button" aria-label="Start new conversation" onClick={startNew}><Sparkles size={15} /></button></div>{threads.length ? threads.map((thread) => <div className="assistant-thread-row" key={thread.id}><button className={`assistant-thread ${conversation?.id === thread.id ? 'selected' : ''}`} onClick={() => openThread(thread)}><b>{thread.title}</b><small>{new Date(thread.updated_at).toLocaleString()}</small></button><button className="icon-button assistant-thread-delete" aria-label={`Delete conversation ${thread.title}`} onClick={() => void deleteThread(thread)}><Trash2 size={13} /></button></div>) : <p className="chart-empty">Your saved chats will appear here.</p>}</aside>
+      <section className="panel assistant-chat">
+        <div className="assistant-paper-picker"><b>Use these papers</b>{papers.length ? papers.map((paper) => <label key={paper.id}><input type="checkbox" disabled={Boolean(conversation)} checked={selected.includes(paper.id)} onChange={() => setSelected((ids) => ids.includes(paper.id) ? ids.filter((id) => id !== paper.id) : [...ids, paper.id])} /><span>{paper.title}</span></label>) : <span className="config-footnote">Upload papers before chatting.</span>}</div>
+        <div className="assistant-messages" ref={scrollRef}>{conversation?.messages.map((message, index) => <article className={`chat-message ${message.role}`} key={`${conversation.id}-${index}`}><span className="chat-role">{message.role === 'user' ? 'You' : 'ResearchLens'}</span><p>{message.content}</p>{message.sources?.length ? <details className="chat-sources"><summary>Sources used ({message.sources.length})</summary>{message.sources.map((source, sourceIndex) => <blockquote key={`${source.paper_id}-${sourceIndex}`}><p>{source.excerpt}</p><cite>[S{sourceIndex + 1}] {source.paper_title}{source.page_number ? ` · p. ${source.page_number}` : ''}</cite></blockquote>)}</details> : null}</article>) || <div className="assistant-welcome"><div className="tiny-icon"><MessageCircle size={17} /></div><h2>Ask about your papers</h2><p>Select one or more papers, then ask about their methods, results, concepts, or differences.</p></div>}{busy && <div className="chat-loading"><span className="spinner purple-spinner" /> Retrieving evidence and preparing an answer…</div>}</div>
+        <form className="assistant-compose" onSubmit={(event) => void submit(event)}><label htmlFor="assistant-question" className="sr-only">Your question</label><textarea id="assistant-question" value={question} maxLength={2000} onChange={(event) => setQuestion(event.target.value)} placeholder={selected.length ? 'Ask a question about the selected papers…' : 'Choose at least one paper to begin…'} disabled={!aiEnabled || busy || !selected.length} /><button className="button primary" disabled={!aiEnabled || busy || !selected.length || question.trim().length < 2}><ArrowRight size={16} /> Send</button></form>
+        {error && <p className="inline-error" role="alert">{error}</p>}
+      </section>
+    </div>
+  </>
+}
+
+function ReportsPage({ analyses, onDownloadReport }: { analyses: Analysis[]; onDownloadReport: (id: string) => Promise<void> }) {
+  return <>
+    <PageHeading eyebrow="EXPORT & SHARE" title="Reports" description="Download saved analyses as PDF or export a portable HTML summary and comparison table." />
+    {!analyses.length ? <EmptyState icon={<FileText size={20} />} title="No reports to export" detail="Run and save an analysis first. It will be available here for export." link="/analysis" linkText="Create an analysis" /> : <div className="reports-list">{analyses.map((analysis) => <article className="panel report-row" key={analysis.id}><div className="report-icon"><FileText size={18} /></div><div className="report-copy"><b>{analysis.prompt}</b><span>{new Date(analysis.created_at).toLocaleString()} · {analysis.result.papers_analyzed?.length || 0} papers · {analysis.result.research_gaps?.length || 0} candidate gaps</span></div><div className="report-actions"><button className="button secondary small-button" onClick={() => void onDownloadReport(analysis.id)}><ArrowDownToLine size={14} /> PDF</button><button className="button secondary small-button" onClick={() => downloadAnalysisHtml(analysis)}><ArrowDownToLine size={14} /> HTML</button>{analysis.result.comparison?.some((row: any) => row?.criterion && Array.isArray(row.findings)) && <button className="button secondary small-button" onClick={() => downloadComparisonCsv(analysis.result.comparison, analysis.result.papers_analyzed || [])}>CSV</button>}<NavLink className="button secondary small-button" to={`/results/${analysis.id}`}>View</NavLink></div></article>)}</div>}
+  </>
+}
+
+function downloadAnalysisHtml(analysis: Analysis) {
+  const escape = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] || character)
+  const paragraphs = [
+    `<h2>Executive summary</h2><p>${escape(analysis.result.executive_summary || 'Not available')}</p>`,
+    `<h2>Paper comparison</h2>${(analysis.result.comparison || []).map((row: any) => `<section><h3>${escape(row.criterion || 'Finding')}</h3><ul>${(row.findings || []).map((finding: any) => `<li><b>${escape(finding.paper_title)}</b>: ${escape(finding.finding)}</li>`).join('')}</ul></section>`).join('')}`,
+    `<h2>Potential research gaps</h2>${(analysis.result.research_gaps || []).map((gap: any) => `<section><h3>${escape(gap.title)}</h3><p>${escape(gap.description)}</p>${(gap.evidence || []).map((source: any) => `<blockquote>${escape(source.excerpt)}<br><small>${escape(source.paper_title)}${source.page_number ? ` · p. ${escape(source.page_number)}` : ''}</small></blockquote>`).join('')}</section>`).join('')}`,
+  ].join('\n')
+  const html = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escape(analysis.prompt)} · ResearchLens</title><style>body{max-width:900px;margin:40px auto;padding:0 20px;font:16px/1.6 system-ui;color:#202534}h1,h2{color:#5549c7}section,blockquote{padding:12px;border-left:3px solid #dedaf8;background:#faf9ff}small{color:#6c7080}</style><h1>ResearchLens analysis report</h1><p>${escape(analysis.prompt)}</p><p>Generated ${escape(new Date(analysis.created_at).toLocaleString())}</p>${paragraphs}</html>`
+  downloadBlob(html, `researchlens-${analysis.id.slice(0, 8)}.html`, 'text/html;charset=utf-8')
+}
+
+function downloadBlob(content: BlobPart, filename: string, type: string) {
+  const url = URL.createObjectURL(new Blob([content], { type }))
+  const link = document.createElement('a')
+  link.href = url; link.download = filename; link.click()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 function Metric({ icon, label, value, note, color }: { icon: ReactNode; label: string; value: string; note: string; color: string }) {
@@ -377,13 +578,15 @@ function PaperDetailPage() {
   </>
 }
 
-function CustomAnalysis({ papers, documents, onUploadDocuments, onAnalyze, onDownloadReport }: { papers: Paper[]; documents: SupportingDocument[]; onUploadDocuments: (files: File[]) => Promise<void>; onAnalyze: (payload: Parameters<typeof api.analysis>[0]) => Promise<Analysis>; onDownloadReport: (id: string) => Promise<void> }) {
-  const [searchParams] = useSearchParams()
+function CustomAnalysis({ papers, projects, documents, onUploadDocuments, onAnalyze, onDownloadReport }: { papers: Paper[]; projects: Project[]; documents: SupportingDocument[]; onUploadDocuments: (files: File[]) => Promise<void>; onAnalyze: (payload: Parameters<typeof api.analysis>[0]) => Promise<Analysis>; onDownloadReport: (id: string) => Promise<void> }) {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const compareMode = searchParams.get('tab') === 'compare'
   const [selected, setSelected] = useState<string[]>(() => {
     const paperId = searchParams.get('paper')
     return paperId ? [paperId] : []
   })
   const [selectedDocuments, setSelectedDocuments] = useState<string[]>([])
+  const [projectId, setProjectId] = useState('')
   const [prompt, setPrompt] = useState('')
   const [criteria, setCriteria] = useState('Methods used, datasets, evaluation metrics, limitations, contributions')
   const [questions, setQuestions] = useState('')
@@ -394,7 +597,13 @@ function CustomAnalysis({ papers, documents, onUploadDocuments, onAnalyze, onDow
   const [review, setReview] = useState(false)
   const [documentBusy, setDocumentBusy] = useState(false)
   const [result, setResult] = useState<Analysis | null>(null)
-  const togglePaper = (id: string) => setSelected((current) => current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id])
+  const compareCriteria = 'Research objective, Methodology, Algorithm, Dataset, Model, Evaluation metrics, Results, Limitations, Future work'
+  const comparisonPrompt = 'Compare the selected research papers across research objectives, methodology, algorithms, datasets, models, evaluation metrics, results, limitations, and future work. Populate each field only from the supplied papers. Use “Not found in document” when evidence is missing. Identify similarities, disagreements, unique contributions, and potential evidence-supported research gaps. Cite exact short excerpts and page numbers when available. Do not infer unsupported facts or claim global novelty.'
+  const togglePaper = (id: string) => setSelected((current) => {
+    if (current.includes(id)) return current.filter((entry) => entry !== id)
+    if (current.length >= (compareMode ? 5 : 10)) return current
+    return [...current, id]
+  })
   const toggleDocument = (id: string) => setSelectedDocuments((current) => current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id])
   const uploadDocuments = async (files: FileList | null) => {
     if (!files?.length) return
@@ -410,38 +619,54 @@ function CustomAnalysis({ papers, documents, onUploadDocuments, onAnalyze, onDow
   const submit = async () => {
     setBusy(true); setError(''); setResult(null)
     try {
-      const response = await onAnalyze({ prompt, paper_ids: selected, document_ids: selectedDocuments, mode, criteria: criteria.split(',').map((item) => item.trim()).filter(Boolean), questions: questions.split('\n').map((item) => item.trim()).filter(Boolean), report_format: format })
+      const response = await onAnalyze({ prompt: compareMode ? comparisonPrompt : prompt, paper_ids: selected, project_id: projectId || null, document_ids: selectedDocuments, mode, criteria: (compareMode ? compareCriteria : criteria).split(',').map((item) => item.trim()).filter(Boolean), questions: questions.split('\n').map((item) => item.trim()).filter(Boolean), report_format: format })
       setResult(response)
     } catch (e) { setError((e as Error).message) } finally { setBusy(false); setReview(false) }
   }
   return <>
-    <PageHeading eyebrow="CUSTOM ANALYSIS" title="Ask a better question" description="Set your own research lens and let the analysis follow your instructions." />
-    <div className="analysis-layout">
+    <PageHeading eyebrow="RESEARCH ANALYSIS WORKSPACE" title={compareMode ? 'Compare research papers' : 'Custom research analysis'} description="Choose a workflow below. Both modes stay in this workspace and use the same selected papers and live results." />
+    <div className="analysis-mode-tabs" role="tablist" aria-label="Analysis workflow">
+      <button className={compareMode ? 'active' : ''} role="tab" aria-selected={compareMode} onClick={() => setSearchParams({ tab: 'compare' })}><FlaskConical size={15} /> Compare papers</button>
+      <button className={!compareMode ? 'active' : ''} role="tab" aria-selected={!compareMode} onClick={() => setSearchParams({ tab: 'custom' })}><Sparkles size={15} /> Custom analysis</button>
+    </div>
+    <div className={`analysis-layout ${compareMode ? 'comparison-workspace' : ''}`}>
       <div className="analysis-form">
-        <section className="panel form-section"><div className="section-heading"><span className="section-number">01</span><div><h2>Choose your papers</h2><p>Select at least one paper from your library.</p></div><span className="selection-count">{selected.length} selected</span></div>
-          {papers.length === 0 ? <div className="paper-empty"><BookOpen size={19} /><div><b>Your library is empty</b><span>Upload research papers before starting an analysis.</span></div><NavLink to="/upload" className="text-link">Upload papers <ArrowRight size={13} /></NavLink></div> : <div className="select-paper-list">{papers.map((paper) => <label className={`select-paper ${selected.includes(paper.id) ? 'selected' : ''}`} key={paper.id}><input type="checkbox" checked={selected.includes(paper.id)} onChange={() => togglePaper(paper.id)} /><span className="paper-checkbox">{selected.includes(paper.id) && <Check size={13} />}</span><FileText size={17} className="select-paper-icon" /><span className="select-paper-info"><b>{paper.title}</b><small>{paper.filename} · {paper.page_count} pages</small></span></label>)}</div>}
+        <section className="panel form-section"><div className="section-heading"><span className="section-number">01</span><div><h2>{compareMode ? 'Select 2–5 papers to compare' : 'Choose your papers'}</h2><p>{compareMode ? 'Choose between two and five papers. Selection order is shown on each card.' : 'Select up to ten papers from your library.'}</p></div><span className="selection-count">{selected.length} selected</span></div>
+          {papers.length === 0 ? <div className="paper-empty"><BookOpen size={19} /><div><b>Your library is empty</b><span>Upload research papers before starting an analysis.</span></div><NavLink to="/upload" className="text-link">Upload papers <ArrowRight size={13} /></NavLink></div> : <div className={compareMode ? 'compare-paper-grid' : 'select-paper-list'}>{papers.map((paper) => {
+            const selectionNumber = selected.indexOf(paper.id)
+            const selectionLocked = !selected.includes(paper.id) && selected.length >= (compareMode ? 5 : 10)
+            return <label className={`${compareMode ? 'compare-paper-card' : 'select-paper'} ${selected.includes(paper.id) ? 'selected' : ''} ${selectionLocked ? 'selection-locked' : ''}`} key={paper.id}>
+              <input type="checkbox" checked={selectionNumber >= 0} disabled={selectionLocked} onChange={() => togglePaper(paper.id)} />
+              {compareMode && <span className="compare-card-number">{selectionNumber >= 0 ? selectionNumber + 1 : ''}</span>}
+              {compareMode ? <span className="compare-card-icon"><FileText size={16} /></span> : <><span className="paper-checkbox">{selectionNumber >= 0 && <Check size={13} />}</span><FileText size={17} className="select-paper-icon" /></>}
+              <span className="select-paper-info"><b>{paper.title}</b><small>{paper.filename} · {paper.page_count} pages · {paper.word_count.toLocaleString()} words</small></span>
+              {compareMode && <span className="compare-paper-topic">{Object.keys(paper.sections || {}).slice(0, 2).map((section) => section.replace(/_/g, ' ')).join(' · ') || 'Paper from your library'}</span>}
+            </label>
+          })}</div>}
+          {compareMode && selected.length > 0 && selected.length < 2 && <p className="comparison-hint">Select at least one more paper to compare.</p>}
         </section>
-        <section className="panel form-section"><div className="section-heading"><span className="section-number">02</span><div><h2>Write your analysis prompt</h2><p>Tell ResearchLens what to focus on. Your instructions are combined with evidence and safety rules.</p></div></div>
+        {!compareMode && <section className="panel form-section"><div className="section-heading"><span className="section-number">02</span><div><h2>Write your analysis prompt</h2><p>Tell ResearchLens what to focus on. Your instructions are combined with evidence and safety rules.</p></div></div>
           <textarea className="prompt-area" value={prompt} maxLength={4000} onChange={(event) => setPrompt(event.target.value)} placeholder="Compare these papers on [your topic]. Focus on the algorithms used, datasets, evaluation metrics, limitations, and unresolved problems. Identify potential research gaps supported by evidence from the uploaded papers and suggest feasible research questions." />
           <div className="field-foot"><span>Be specific about scope, comparisons, and outputs.</span><span>{prompt.length}/4,000</span></div>
           <div className="quick-prompt"><span>Try an example:</span><button onClick={() => setPrompt('Compare the research approaches in these papers. Focus on their objectives, methodologies, datasets, results, limitations, and future work. Identify only potential gaps supported by direct evidence from the uploaded material and suggest three feasible research questions.')}>Evidence-based comparison <ArrowRight size={12} /></button></div>
-        </section>
+        </section>}
         <section className="panel form-section"><div className="section-heading"><span className="section-number">+</span><div><h2>Supporting documents</h2><p>Optionally include guidelines, notes, datasets, or references as additional context.</p></div></div>
           <label className="support-upload">{documentBusy ? <><span className="spinner purple-spinner" /> Adding document…</> : <><FilePlus2 size={15} /> Add PDF, TXT, Markdown, or CSV<input type="file" accept=".pdf,.txt,.md,.csv,application/pdf,text/plain,text/markdown,text/csv" multiple onChange={(event) => { void uploadDocuments(event.target.files); event.target.value = '' }} /></>}</label>
           {documents.length > 0 && <div className="support-list">{documents.map((document) => <label className={`support-row ${selectedDocuments.includes(document.id) ? 'selected' : ''}`} key={document.id}><input type="checkbox" checked={selectedDocuments.includes(document.id)} onChange={() => toggleDocument(document.id)} /><span className="paper-checkbox">{selectedDocuments.includes(document.id) && <Check size={13} />}</span><FileText size={15} /><span><b>{document.filename}</b><small>{document.word_count.toLocaleString()} words</small></span></label>)}</div>}
         </section>
-        <section className="panel form-section"><div className="section-heading"><span className="section-number">03</span><div><h2>Shape your output</h2><p>Adjust the analysis mode and add domain-specific criteria.</p></div></div>
+        <section className="panel form-section"><div className="section-heading"><span className="section-number">{compareMode ? '02' : '03'}</span><div><h2>{compareMode ? 'Comparison options' : 'Shape your output'}</h2><p>{compareMode ? 'Compare evidence fields and identify candidate gaps from selected papers.' : 'Adjust the analysis mode and add domain-specific criteria.'}</p></div></div>
+          {projects.length > 0 && <label className="field-label project-analysis-select">Save to project<select value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="">No project</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>}
           <div className="two-fields"><label className="field-label">Analysis mode<select value={mode} onChange={(event) => setMode(event.target.value)}><option value="comprehensive">Comprehensive comparison</option><option value="similarity">Similarity and differences</option><option value="gaps">Research-gap discovery</option><option value="individual">Individual paper summaries</option></select></label><label className="field-label">Report format<select value={format} onChange={(event) => setFormat(event.target.value)}><option value="detailed">Detailed report</option><option value="concise">Concise summary</option><option value="table">Comparison-first</option></select></label></div>
-          <label className="field-label criteria-field">Custom comparison criteria<input value={criteria} onChange={(event) => setCriteria(event.target.value)} placeholder="Separate criteria with commas" /></label>
+          {!compareMode && <label className="field-label criteria-field">Custom comparison criteria<input value={criteria} onChange={(event) => setCriteria(event.target.value)} placeholder="Separate criteria with commas" /></label>}
           <label className="field-label">Domain-specific questions<textarea className="questions-area" value={questions} onChange={(event) => setQuestions(event.target.value)} placeholder={'One question per line (optional)\nWhich dataset is used most often?\nHow are the results evaluated?'} /></label>
         </section>
-        <div className="analysis-submit-row"><div><ShieldCheck size={16} /><span>Paper content is treated as untrusted source material.</span></div><button className="button primary" disabled={busy || !selected.length || prompt.trim().length < 5} onClick={() => setReview(true)}><Sparkles size={16} /> Review analysis</button></div>
+        <div className="analysis-submit-row"><div><ShieldCheck size={16} /><span>Paper content is treated as untrusted source material.</span></div><button className="button primary" disabled={busy || (compareMode ? selected.length < 2 : !selected.length || prompt.trim().length < 5)} onClick={() => setReview(true)}><Sparkles size={16} /> {compareMode ? 'Compare selected papers' : 'Review analysis'}</button></div>
         {error && <div className="inline-error" role="alert"><X size={16} />{error}</div>}
         {result && <Results analysis={result} onDownloadReport={onDownloadReport} />}
       </div>
       <aside className="analysis-aside"><div className="panel workflow-panel"><span className="eyebrow">YOUR WORKFLOW</span><h2>From papers to perspective</h2><div className="workflow-step"><span>1</span><div><b>Read your sources</b><small>PDF text and likely section headings are extracted locally.</small></div></div><div className="workflow-step"><span>2</span><div><b>Follow your prompt</b><small>Your focus guides the analysis of the selected papers.</small></div></div><div className="workflow-step"><span>3</span><div><b>Check the evidence</b><small>Potential gaps are returned only with matching source excerpts.</small></div></div></div><div className="panel analysis-note"><div className="tiny-icon"><ShieldCheck size={16} /></div><b>Interpret with care</b><p>Candidate gaps reflect only the papers you selected. They do not establish that a topic is globally novel or unexplored.</p></div></aside>
     </div>
-    {review && <div className="modal-scrim" role="presentation"><div className="review-modal" role="dialog" aria-modal="true" aria-labelledby="review-title"><div className="modal-heading"><div><span className="eyebrow">FINAL CHECK</span><h2 id="review-title">Review your analysis</h2></div><button className="icon-button" onClick={() => setReview(false)} aria-label="Close"><X size={18} /></button></div><p className="review-label">PAPERS ({selected.length})</p><div className="review-papers">{papers.filter((paper) => selected.includes(paper.id)).map((paper) => <span key={paper.id}><FileText size={14} />{paper.title}</span>)}</div>{selectedDocuments.length > 0 && <><p className="review-label">SUPPORTING DOCUMENTS ({selectedDocuments.length})</p><div className="review-papers">{documents.filter((document) => selectedDocuments.includes(document.id)).map((document) => <span key={document.id}><FileText size={14} />{document.filename}</span>)}</div></>}<p className="review-label">YOUR PROMPT</p><div className="review-prompt">{prompt}</div><p className="review-label">MODE · {mode.replace('-', ' ')} · {format} report</p><div className="modal-actions"><button className="button secondary" onClick={() => setReview(false)}>Back to edit</button><button className="button primary" disabled={busy} onClick={submit}>{busy ? <><span className="spinner" /> Starting…</> : <><Sparkles size={15} /> Start analysis</>}</button></div></div></div>}
+    {review && <div className="modal-scrim" role="presentation"><div className="review-modal" role="dialog" aria-modal="true" aria-labelledby="review-title"><div className="modal-heading"><div><span className="eyebrow">FINAL CHECK</span><h2 id="review-title">{compareMode ? 'Review your comparison' : 'Review your analysis'}</h2></div><button className="icon-button" onClick={() => setReview(false)} aria-label="Close"><X size={18} /></button></div><p className="review-label">PAPERS ({selected.length})</p><div className="review-papers">{papers.filter((paper) => selected.includes(paper.id)).map((paper) => <span key={paper.id}><FileText size={14} />{paper.title}</span>)}</div>{selectedDocuments.length > 0 && <><p className="review-label">SUPPORTING DOCUMENTS ({selectedDocuments.length})</p><div className="review-papers">{documents.filter((document) => selectedDocuments.includes(document.id)).map((document) => <span key={document.id}><FileText size={14} />{document.filename}</span>)}</div></>}<p className="review-label">{compareMode ? 'COMPARISON SCOPE' : 'YOUR PROMPT'}</p><div className="review-prompt">{compareMode ? comparisonPrompt : prompt}</div><p className="review-label">MODE · {mode.replace('-', ' ')} · {format} report</p><div className="modal-actions"><button className="button secondary" onClick={() => setReview(false)}>Back to edit</button><button className="button primary" disabled={busy} onClick={submit}>{busy ? <><span className="spinner" /> Starting…</> : <><Sparkles size={15} /> Start analysis</>}</button></div></div></div>}
   </>
 }
 
@@ -453,17 +678,58 @@ function Results({ analysis, onDownloadReport }: { analysis: Analysis; onDownloa
     {result.paper_summaries?.length > 0 && <div className="result-card"><h3>Individual paper summaries</h3>{result.paper_summaries.map((paper: any) => <div className="summary-row" key={paper.paper_id}><b>{paper.title}</b><p>{paper.summary}</p>{['objectives', 'methodology', 'datasets', 'results', 'limitations', 'future_work'].map((key) => paper[key] && paper[key] !== 'Not confidently extracted.' && <div className="summary-fact" key={key}><strong>{key.replace('_', ' ')}</strong><span>{paper[key]}</span></div>)}</div>)}</div>}
     {result.similarities?.length > 0 && <div className="result-card"><h3>Similarity analysis</h3><SimilarityMatrix similarities={result.similarities} papers={result.papers_analyzed || result.paper_summaries || []} /><p className="config-footnote">Similarity scores describe text-vector closeness only. They do not prove that papers make the same contribution or establish a research gap.</p>{result.similarities.map((entry: any, index: number) => <div className="similarity-row" key={index}><div><b>{entry.paper_titles?.join(' ↔ ') || entry.paper_ids?.join(' ↔ ')}</b><span>{entry.method} · {entry.explanation}</span></div><div className="similarity-score">{Math.round(entry.score * 100)}<small>%</small></div></div>)}</div>}
     {result.comparison?.length > 0 && <div className="result-card"><div className="panel-heading"><h3>Comparison matrix</h3>{result.comparison.some((item: any) => item?.criterion && Array.isArray(item.findings)) && <button className="button secondary small-button" onClick={() => downloadComparisonCsv(result.comparison, result.papers_analyzed || result.paper_summaries || [])}>Export CSV</button>}</div>{result.comparison.some((item: any) => item?.criterion && Array.isArray(item.findings)) ? <ComparisonMatrix comparison={result.comparison} papers={result.papers_analyzed || result.paper_summaries || []} /> : result.comparison.map((item: any, index: number) => <StructuredItem key={index} item={item} />)}</div>}
-    <div className="result-card"><h3>Potential research gaps</h3>{result.research_gaps?.length ? result.research_gaps.map((gap: any, index: number) => <details className="gap-item" key={index}><summary><span><b>{gap.title}</b><small>{gap.confidence !== undefined ? `Confidence: ${Math.round(gap.confidence * 100)}%` : 'Candidate gap'}</small></span><ChevronDown size={17} /></summary><p>{gap.description}</p>{gap.uncertainty && <p className="uncertainty"><b>Uncertainty:</b> {gap.uncertainty}</p>}{gap.evidence?.map((evidence: any, evidenceIndex: number) => <blockquote key={evidenceIndex}><p>“{evidence.excerpt}”</p><cite>{evidence.paper_title}{evidence.page_number ? ` · p. ${evidence.page_number}` : ''}</cite></blockquote>)}{gap.counter_evidence?.length > 0 && <p><b>Counter-evidence:</b> {gap.counter_evidence.join(' ')}</p>}</details>) : <div className="no-gaps"><ShieldCheck size={18} /><span>{result.demo_mode ? 'Research-gap discovery requires live Gemini analysis. No gaps were generated in local mode.' : 'No evidence-supported gaps were identified in the selected papers.'}</span></div>}</div>
+    <GapDiscovery gaps={result.research_gaps || []} demoMode={Boolean(result.demo_mode)} />
     {['repeated_limitations', 'research_questions', 'future_directions', 'limitations'].map((key) => result[key]?.length > 0 && <div className="result-card" key={key}><h3>{key.replace(/_/g, ' ').replace(/^\w/, (letter: string) => letter.toUpperCase())}</h3>{result[key].map((item: any, index: number) => <StructuredItem key={index} item={item} />)}</div>)}
   </section>
 }
 
+function GapDiscovery({ gaps, demoMode }: { gaps: any[]; demoMode: boolean }) {
+  const [category, setCategory] = useState('All')
+  const categories = [...new Set(gaps.map((gap) => {
+    if (typeof gap.category === 'string' && gap.category.trim()) return gap.category.trim()
+    const title = String(gap.title || '').toLowerCase()
+    if (title.includes('dataset') || title.includes('data set')) return 'Dataset'
+    if (title.includes('method') || title.includes('approach')) return 'Methodology'
+    if (title.includes('scale') || title.includes('latency')) return 'Scalability'
+    if (title.includes('explain')) return 'Explainability'
+    if (title.includes('evaluat') || title.includes('metric')) return 'Evaluation'
+    if (title.includes('future')) return 'Future work'
+    return 'Other'
+  }))].sort()
+  const averageConfidence = gaps.length
+    ? Math.round(gaps.reduce((total, gap) => total + (typeof gap.confidence === 'number' ? gap.confidence : 0), 0) / gaps.length * 100)
+    : 0
+  const visibleGaps = gaps.filter((gap) => {
+    const title = String(gap.title || '').toLowerCase()
+    const itemCategory = typeof gap.category === 'string' && gap.category.trim()
+      ? gap.category.trim()
+      : title.includes('dataset') || title.includes('data set') ? 'Dataset'
+        : title.includes('method') || title.includes('approach') ? 'Methodology'
+          : title.includes('scale') || title.includes('latency') ? 'Scalability'
+            : title.includes('explain') ? 'Explainability'
+              : title.includes('evaluat') || title.includes('metric') ? 'Evaluation'
+                : title.includes('future') ? 'Future work' : 'Other'
+    return category === 'All' || itemCategory === category
+  })
+  return <section className="result-card gap-discovery"><div className="gap-heading"><div><span className="eyebrow">EVIDENCE FROM SELECTED PAPERS</span><h3>Potential research gaps</h3><p>These candidates reflect only your uploaded selection; they are not claims of global novelty.</p></div></div>
+    {gaps.length > 0 && <><div className="gap-metrics"><div><small>Potential gaps</small><b>{gaps.length}</b></div><div><small>Higher confidence (≥75%)</small><b>{gaps.filter((gap) => typeof gap.confidence === 'number' && gap.confidence >= 0.75).length}</b></div><div><small>Categories</small><b>{categories.length}</b></div><div><small>Mean confidence</small><b>{averageConfidence}%</b></div></div><div className="gap-filter-row"><button className={category === 'All' ? 'active' : ''} onClick={() => setCategory('All')}>All ({gaps.length})</button>{categories.map((item) => <button className={category === item ? 'active' : ''} key={item} onClick={() => setCategory(item)}>{item} ({gaps.filter((gap) => {
+      const title = String(gap.title || '').toLowerCase()
+      const normalized = typeof gap.category === 'string' && gap.category.trim() ? gap.category.trim() : title.includes('dataset') || title.includes('data set') ? 'Dataset' : title.includes('method') || title.includes('approach') ? 'Methodology' : title.includes('scale') || title.includes('latency') ? 'Scalability' : title.includes('explain') ? 'Explainability' : title.includes('evaluat') || title.includes('metric') ? 'Evaluation' : title.includes('future') ? 'Future work' : 'Other'
+      return normalized === item
+    }).length})</button>)}</div><div className="gap-card-grid">{visibleGaps.map((gap, index) => <article className="gap-research-card" key={`${gap.title}-${index}`}><div className="gap-card-meta"><span>{typeof gap.category === 'string' ? gap.category : categories.find((item) => {
+      const title = String(gap.title || '').toLowerCase()
+      return item === (title.includes('dataset') ? 'Dataset' : title.includes('method') ? 'Methodology' : title.includes('scale') ? 'Scalability' : title.includes('explain') ? 'Explainability' : title.includes('evaluat') ? 'Evaluation' : title.includes('future') ? 'Future work' : 'Other')
+    }) || 'Other'}</span><b>{typeof gap.confidence === 'number' ? `${Math.round(gap.confidence * 100)}% confidence` : 'Candidate'}</b></div><h4>{gap.title || 'Potential gap'}</h4><p>{gap.description}</p>{gap.suggested_direction && <div className="gap-direction"><Sparkles size={13} /><div><b>Suggested direction</b><span>{gap.suggested_direction}</span></div></div>}<details className="gap-evidence-details"><summary>View evidence ({gap.evidence?.length || 0} sources)<ChevronDown size={14} /></summary>{gap.evidence?.map((evidence: any, evidenceIndex: number) => <blockquote key={`${evidence.paper_id}-${evidenceIndex}`}><p>“{evidence.excerpt}”</p><cite>{evidence.paper_title}{evidence.page_number ? ` · p. ${evidence.page_number}` : ''}</cite></blockquote>)}{gap.uncertainty && <p className="uncertainty"><b>Uncertainty:</b> {gap.uncertainty}</p>}{gap.counter_evidence?.length > 0 && <p className="gap-counter-evidence"><b>Counter-evidence:</b> {gap.counter_evidence.join(' ')}</p>}</details></article>)}</div></>}
+    {!gaps.length && <div className="no-gaps"><ShieldCheck size={18} /><span>{demoMode ? 'Research-gap discovery requires live Gemini analysis. No gaps were generated in local mode.' : 'No evidence-supported gaps were identified in the selected papers.'}</span></div>}
+  </section>
+}
+
 function StructuredItem({ item }: { item: any }) {
-  return <div className="structured-item"><b>{typeof item === 'string' ? item : item.title || item.name || item.question || 'Finding'}</b>{item.description && <p>{item.description}</p>}{item.evidence?.map((evidence: any, index: number) => <blockquote key={index}><p>“{evidence.excerpt}”</p><cite>{evidence.paper_title}</cite></blockquote>)}</div>
+  return <div className="structured-item"><b>{typeof item === 'string' ? item : item.title || item.name || item.question || 'Finding'}</b>{item.description && <p>{item.description}</p>}{item.evidence?.map((evidence: any, index: number) => <blockquote key={index}><p>“{evidence.excerpt}”</p><cite>{evidence.paper_title}{evidence.page_number ? ` · p. ${evidence.page_number}` : ''}</cite></blockquote>)}</div>
 }
 
 function ComparisonMatrix({ comparison, papers }: { comparison: any[]; papers: any[] }) {
-  return <div className="comparison-table-wrap"><table className="comparison-table"><thead><tr><th>Criterion</th>{papers.map((paper) => <th key={paper.paper_id}>{paper.title}</th>)}</tr></thead><tbody>{comparison.filter((item) => item?.criterion && Array.isArray(item.findings)).map((item, index) => <tr key={`${item.criterion}-${index}`}><th>{item.criterion}</th>{papers.map((paper) => <td key={paper.paper_id}>{item.findings.find((finding: any) => finding.paper_id === paper.paper_id)?.finding || 'Not reported in supplied text'}</td>)}</tr>)}</tbody></table></div>
+  return <div className="comparison-table-wrap"><table className="comparison-table"><thead><tr><th>Criterion</th>{papers.map((paper) => <th key={paper.paper_id}>{paper.title}</th>)}</tr></thead><tbody>{comparison.filter((item) => item?.criterion && Array.isArray(item.findings)).map((item, index) => <tr key={`${item.criterion}-${index}`}><th>{item.criterion}</th>{papers.map((paper) => <td key={paper.paper_id}>{item.findings.find((finding: any) => finding.paper_id === paper.paper_id)?.finding || 'Not found in document'}</td>)}</tr>)}</tbody></table></div>
 }
 
 function SimilarityMatrix({ similarities, papers }: { similarities: any[]; papers: any[] }) {
@@ -493,7 +759,7 @@ function downloadComparisonCsv(comparison: any[], papers: any[]) {
       .filter((item) => item?.criterion && Array.isArray(item.findings))
       .map((item) => [
         item.criterion,
-        ...papers.map((paper) => item.findings.find((finding: any) => finding.paper_id === paper.paper_id)?.finding || 'Not reported in supplied text'),
+        ...papers.map((paper) => item.findings.find((finding: any) => finding.paper_id === paper.paper_id)?.finding || 'Not found in document'),
       ]),
   ]
   const blob = new Blob([`\uFEFF${rows.map((row) => row.map(cells).join(',')).join('\r\n')}`], { type: 'text/csv;charset=utf-8' })
@@ -533,10 +799,30 @@ function ResultPage({ analyses, onDownloadReport }: { analyses: Analysis[]; onDo
   return <><PageHeading eyebrow="SAVED RESULTS" title="Research analysis" description={new Date(analysis.created_at).toLocaleString()} action={<button className="button secondary" onClick={() => void onDownloadReport(analysis.id)}><ArrowDownToLine size={15} /> Download PDF</button>} /><Results analysis={analysis} onDownloadReport={onDownloadReport} /></>
 }
 
-function SettingsPage({ aiEnabled }: { aiEnabled: boolean }) {
+function SettingsPage({ aiEnabled, userEmail, authenticated }: { aiEnabled: boolean; userEmail: string; authenticated: boolean }) {
   return <>
-    <PageHeading eyebrow="PREFERENCES & CONFIGURATION" title="Settings & API setup" description="Configure the analysis provider without ever exposing your API key to the browser." />
-    <div className="settings-layout"><section className="panel settings-card"><div className="settings-status"><div className={`metric-icon ${aiEnabled ? 'green' : 'amber'}`}><Gauge size={18} /></div><div><span className="eyebrow">AI PROVIDER STATUS</span><h2>{aiEnabled ? 'Gemini is configured' : 'Local demo mode is active'}</h2><p>{aiEnabled ? 'Live analysis and embedding similarity are available.' : 'Uploads, text extraction, local lexical overlap, and PDF reports work without an API key.'}</p></div></div><div className="settings-divider" /><h3>Enable live AI analysis</h3><ol className="setup-list"><li><span>1</span><div><b>Create a Gemini API key</b><p>Use Google AI Studio to create a key for Gemini API access. Review provider terms and usage limits.</p></div></li><li><span>2</span><div><b>Add the key to your local environment</b><p>Copy the project’s <code>.env.example</code> to <code>.env</code> in the project root and set <code>GEMINI_API_KEY=your_key</code>.</p></div></li><li><span>3</span><div><b>Restart the backend</b><p>The key is read by FastAPI on startup and is never sent to React or included in API responses.</p></div></li></ol><div className="security-callout"><ShieldCheck size={17} /><div><b>Keep your key private</b><span>Never add .env to source control, paste keys into the analysis prompt, or share them in screenshots.</span></div></div></section><section className="panel config-card"><div className="tiny-icon"><Settings size={16} /></div><span className="eyebrow">SERVER CONFIGURATION</span><h2>Environment variables</h2><div className="config-row"><code>GEMINI_API_KEY</code><span>Private API key</span></div><div className="config-row"><code>GEMINI_MODEL</code><span>gemini-3.8-flash</span></div><div className="config-row"><code>GEMINI_EMBEDDING_MODEL</code><span>gemini-embedding-001</span></div><div className="config-row"><code>MAX_UPLOAD_MB</code><span>25 MB per paper</span></div><p className="config-footnote">All values are read by the Python backend. Browser configuration contains only the API base URL.</p></section></div>
+    <PageHeading eyebrow="ACCOUNT & CONFIGURATION" title="Settings" description="Review your account, AI connection, privacy boundaries, and server-side configuration." />
+    <div className="settings-layout">
+      <section className="panel settings-card">
+        <div className="panel-heading"><div><span className="eyebrow">ACCOUNT</span><h2>{authenticated ? 'Google account' : 'Local workspace'}</h2></div><div className={`metric-icon ${authenticated ? 'green' : 'blue'}`}><ShieldCheck size={18} /></div></div>
+        <div className="settings-detail-row"><span>Signed in as</span><b>{userEmail || 'Local account on this deployment'}</b></div>
+        <div className="settings-detail-row"><span>Access mode</span><b>{authenticated ? 'Google sign-in and allowlist enabled' : 'Local account mode'}</b></div>
+        <div className="settings-detail-row"><span>AI provider</span><b>{aiEnabled ? 'Gemini configured on backend' : 'Local demo mode'}</b></div>
+        <div className="settings-divider" />
+        <span className="eyebrow">PRIVACY & DATA</span>
+        <div className="security-callout"><ShieldCheck size={17} /><div><b>API credentials stay on the server</b><span>ResearchLens does not expose Gemini API keys to the browser. If Gemini is enabled, selected paper text is sent to the configured provider for analysis.</span></div></div>
+        <ul className="settings-bullets"><li>Paper text and analysis results are stored in the configured database.</li><li>Uploaded PDF binaries are extracted during upload and are not retained by this service.</li><li>Deleting a paper removes it from the library; saved analysis reports remain part of analysis history.</li></ul>
+      </section>
+      <section className="panel config-card">
+        <div className="tiny-icon"><Settings size={16} /></div><span className="eyebrow">SERVER CONFIGURATION</span><h2>Environment variables</h2>
+        <div className="config-row"><code>GEMINI_API_KEY</code><span>{aiEnabled ? 'Configured (value hidden)' : 'Not configured'}</span></div>
+        <div className="config-row"><code>GEMINI_MODEL</code><span>Set by backend operator</span></div>
+        <div className="config-row"><code>GEMINI_EMBEDDING_MODEL</code><span>Set by backend operator</span></div>
+        <div className="config-row"><code>MAX_UPLOAD_MB</code><span>Backend default: 25 MB</span></div>
+        <p className="config-footnote">For Render, update API variables in the Render service dashboard. For local development, update the root .env and restart the backend. Settings are intentionally read-only here so secrets cannot be changed through the browser.</p>
+        <a className="button secondary settings-link" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">Manage Gemini API key <ArrowRight size={14} /></a>
+      </section>
+    </div>
   </>
 }
 

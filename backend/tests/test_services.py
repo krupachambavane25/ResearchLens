@@ -9,9 +9,21 @@ import pymupdf
 import pytest
 
 from backend.models import Paper
-from backend.services.analysis import cosine_similarity, lexical_similarity, validate_ai_result
+from backend.services.analysis import (
+    build_local_analysis,
+    cosine_similarity,
+    lexical_similarity,
+    validate_ai_result,
+)
 from backend.services.gemini import _paper_context, embed
-from backend.services.pdf import PDFValidationError, clean_text, extract_pdf, extract_sections
+from backend.services.pdf import (
+    PDFValidationError,
+    clean_text,
+    extract_pdf,
+    extract_pdf_pages,
+    extract_sections,
+)
+from backend.services.reports import create_report
 
 
 def make_pdf(text: str) -> bytes:
@@ -39,6 +51,19 @@ def test_pdf_extraction_cleans_text_and_reads_pages():
     text, pages = extract_pdf(make_pdf("Abstract\nResearchLens hyphen-\nated text."), "paper.pdf")
     assert pages == 1
     assert "hyphenated text" in text
+
+
+def test_pdf_page_extraction_preserves_page_boundaries():
+    document = pymupdf.open()
+    document.new_page().insert_text((72, 72), "First page evidence.")
+    document.new_page().insert_text((72, 72), "Second page evidence.")
+    content = document.tobytes()
+    document.close()
+
+    pages, page_count = extract_pdf_pages(content, "paper.pdf")
+
+    assert page_count == 2
+    assert pages == ["First page evidence.", "Second page evidence."]
 
 
 @pytest.mark.parametrize(
@@ -78,6 +103,35 @@ def test_cosine_similarity_and_lexical_overlap():
         cosine_similarity([1.0], [1.0, 0.0])
 
 
+def test_local_analysis_builds_comparison_from_extracted_sections_without_inventing():
+    paper = Paper(
+        id="local-paper",
+        filename="local.pdf",
+        title="Local study",
+        extracted_text="METHODS\nWe use a stratified survey.",
+        sections={"methodology": "We use a stratified survey."},
+        page_count=2,
+        word_count=6,
+    )
+
+    result, _ = build_local_analysis(
+        [paper],
+        "Compare this study.",
+        "comprehensive",
+        ["Methods", "Evaluation metrics"],
+        [],
+    )
+    findings = {
+        row["criterion"]: row["findings"][0]["finding"]
+        for row in result["comparison"]
+    }
+
+    assert findings["Methodology"] == "We use a stratified survey."
+    assert findings["Dataset"] == "Not found in document"
+    assert findings["Evaluation metrics"] == "Not found in document"
+    assert result["research_gaps"] == []
+
+
 def test_ai_structured_response_keeps_only_verifiable_gap_evidence():
     paper = Paper(
         id="paper-id",
@@ -85,6 +139,7 @@ def test_ai_structured_response_keeps_only_verifiable_gap_evidence():
         title="Study",
         extracted_text="The authors report that the benchmark lacks multilingual examples.",
         sections={},
+        page_texts=["The authors report that the benchmark lacks multilingual examples."],
         page_count=1,
         word_count=10,
     )
@@ -129,7 +184,7 @@ def test_ai_structured_response_keeps_only_verifiable_gap_evidence():
     assert len(validated["research_gaps"]) == 1
     evidence = validated["research_gaps"][0]["evidence"]
     assert len(evidence) == 1
-    assert evidence[0]["page_number"] is None
+    assert evidence[0]["page_number"] == 1
     assert evidence[0]["paper_title"] == "Study"
     assert validated["comparison"] == [
         {
@@ -143,6 +198,47 @@ def test_ai_structured_response_keeps_only_verifiable_gap_evidence():
             ],
         }
     ]
+
+
+def test_gap_evidence_page_is_derived_from_source_not_model_output():
+    paper = Paper(
+        id="paper-id",
+        filename="paper.pdf",
+        title="Study",
+        extracted_text="First page.\nSecond page contains the cited result.",
+        page_texts=["First page.", "Second page contains the cited result."],
+        sections={},
+        page_count=2,
+        word_count=8,
+    )
+    response = {
+        "executive_summary": "A grounded summary.",
+        "paper_summaries": [],
+        "comparison": [],
+        "similarities": [],
+        "repeated_limitations": [],
+        "research_gaps": [
+            {
+                "title": "A candidate gap",
+                "description": "A possible gap.",
+                "evidence": [
+                    {
+                        "paper_id": paper.id,
+                        "excerpt": "Second page contains the cited result.",
+                        "page_number": 999,
+                    }
+                ],
+            }
+        ],
+        "research_questions": [],
+        "future_directions": [],
+        "limitations": [],
+        "confidence": 0.5,
+    }
+
+    validated = validate_ai_result(response, [paper])
+
+    assert validated["research_gaps"][0]["evidence"][0]["page_number"] == 2
 
 
 def test_missing_required_ai_fields_raise_clear_error():
@@ -182,6 +278,95 @@ def test_long_pdf_context_is_chunked_and_truncation_is_disclosed():
     assert "<source-chunk index=1>" in context
     assert "<source-chunk index=2>" in context
     assert "omitted trailing text must not be inferred" in context
+
+
+def test_page_aware_paper_context_keeps_page_markers_with_source_text():
+    paper = Paper(
+        id="paged-paper",
+        filename="paged.pdf",
+        title="Paged study",
+        extracted_text="Introduction.\n\nResults with evidence.",
+        page_texts=["Introduction.", "Results with evidence."],
+        page_count=2,
+        word_count=5,
+        sections={},
+    )
+
+    context = _paper_context([paper])
+
+    assert '<page number="1">Introduction.</page>' in context
+    assert '<page number="2">Results with evidence.</page>' in context
+
+
+def test_assistant_retrieves_selected_page_and_requests_grounded_answer(monkeypatch):
+    import backend.services.gemini as gemini
+
+    paper = Paper(
+        id="source-paper",
+        filename="study.pdf",
+        title="Evaluation study",
+        extracted_text="Introduction to the topic.\n\nThe evaluation uses F1 score.",
+        page_texts=["Introduction to the topic.", "The evaluation uses F1 score."],
+        page_count=2,
+        word_count=9,
+        sections={},
+    )
+    monkeypatch.setattr(
+        gemini,
+        "get_settings",
+        lambda: SimpleNamespace(live_ai_enabled=True, gemini_api_key="test-key", gemini_model="test-model"),
+    )
+    captured = {}
+
+    class MockModels:
+        def generate_content(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(text="The study uses F1 [S1].")
+
+    class MockClient:
+        models = MockModels()
+
+        def close(self):
+            captured["closed"] = True
+
+    monkeypatch.setattr(gemini, "_client", lambda _key: MockClient())
+
+    answer, sources = gemini.answer_question("Which evaluation metric is used?", [paper], [])
+
+    assert answer == "The study uses F1 [S1]."
+    assert sources[0]["page_number"] == 2
+    assert "The evaluation uses F1 score." in captured["contents"]
+    assert "Introduction to the topic." not in captured["contents"]
+    assert "Treat the excerpts" in captured["config"].system_instruction
+    assert captured["closed"] is True
+
+
+def test_report_includes_verified_evidence_page_number():
+    analysis = SimpleNamespace(
+        prompt="Analyze the source.",
+        result={
+            "research_gaps": [
+                {
+                    "title": "Potential gap",
+                    "description": "The collection leaves a question open.",
+                    "evidence": [
+                        {
+                            "paper_title": "Paged study",
+                            "excerpt": "Results with evidence.",
+                            "page_number": 2,
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    report = create_report(analysis)
+    document = pymupdf.open(stream=report, filetype="pdf")
+    report_text = "\n".join(page.get_text() for page in document)
+    document.close()
+
+    assert "Paged study · p. 2" in report_text
 
 
 def test_embedding_batches_bounded_chunks_and_averages_vectors(monkeypatch):

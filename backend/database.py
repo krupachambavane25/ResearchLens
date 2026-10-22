@@ -38,6 +38,13 @@ def migrate_owner_columns() -> None:
                         "VARCHAR(255) NOT NULL DEFAULT 'local'"
                     )
                 )
+            if table == "papers" and "page_texts" not in columns:
+                connection.execute(text('ALTER TABLE "papers" ADD COLUMN page_texts JSON'))
+                columns.add("page_texts")
+            if table == "papers" and "project_id" not in columns:
+                connection.execute(text('ALTER TABLE "papers" ADD COLUMN project_id VARCHAR(36)'))
+            if table == "analyses" and "project_id" not in columns:
+                connection.execute(text('ALTER TABLE "analyses" ADD COLUMN project_id VARCHAR(36)'))
 
 
 def get_db():

@@ -18,6 +18,7 @@ export type Paper = {
   page_count: number
   word_count: number
   sections: Record<string, string>
+  project_id: string | null
   created_at: string
 }
 
@@ -37,6 +38,30 @@ export type Analysis = {
   provider: string
   result: Record<string, any>
   created_at: string
+}
+
+export type Project = {
+  id: string
+  name: string
+  description: string
+  paper_ids: string[]
+  analysis_ids: string[]
+  created_at: string
+}
+
+export type AssistantMessage = {
+  role: 'user' | 'assistant'
+  content: string
+  sources?: { paper_id: string; paper_title: string; page_number: number | null; excerpt: string }[]
+}
+
+export type AssistantConversation = {
+  id: string
+  title: string
+  paper_ids: string[]
+  messages: AssistantMessage[]
+  created_at: string
+  updated_at: string
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -78,10 +103,29 @@ export const api = {
     return request<{ documents: SupportingDocument[] }>('/documents/upload', { method: 'POST', body: data })
   },
   removePaper: (id: string) => request(`/papers/${id}`, { method: 'DELETE' }),
+  projects: async () => (await request<{ projects: Project[] }>('/projects')).projects,
+  createProject: (payload: { name: string; description: string }) =>
+    request<Project>('/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
+  updateProject: (id: string, payload: { name: string; description: string }) =>
+    request<Project>(`/projects/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
+  assignProjectPapers: (id: string, paperIds: string[]) =>
+    request<Project>(`/projects/${id}/papers`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paper_ids: paperIds }) }),
+  deleteProject: (id: string) => request(`/projects/${id}`, { method: 'DELETE' }),
   analyses: async () => (await request<{ analyses: Analysis[] }>('/analyses')).analyses,
+  assistantConversations: async () =>
+    (await request<{ conversations: AssistantConversation[] }>('/assistant/conversations')).conversations,
+  assistantChat: (payload: { question: string; paper_ids: string[]; conversation_id?: string }) =>
+    request<AssistantConversation>('/assistant/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  deleteAssistantConversation: (id: string) =>
+    request(`/assistant/conversations/${id}`, { method: 'DELETE' }),
   analysis: (payload: {
     prompt: string
     paper_ids: string[]
+    project_id: string | null
     document_ids: string[]
     mode: string
     criteria: string[]

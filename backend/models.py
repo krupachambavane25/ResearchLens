@@ -23,7 +23,9 @@ class Paper(Base):
     page_count: Mapped[int] = mapped_column(Integer, default=0)
     word_count: Mapped[int] = mapped_column(Integer, default=0)
     extracted_text: Mapped[str] = mapped_column(Text, nullable=False)
+    page_texts: Mapped[list[str] | None] = mapped_column(JSON, default=list)
     sections: Mapped[dict] = mapped_column(JSON, default=dict)
+    project_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     analysis_links: Mapped[list["AnalysisPaper"]] = relationship(
@@ -38,6 +40,7 @@ class Analysis(Base):
     owner_id: Mapped[str] = mapped_column(String(255), nullable=False, default="local", index=True)
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
     mode: Mapped[str] = mapped_column(String(40), default="comprehensive")
+    project_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     criteria: Mapped[list] = mapped_column(JSON, default=list)
     questions: Mapped[list] = mapped_column(JSON, default=list)
     result: Mapped[dict] = mapped_column(JSON, nullable=False)
@@ -81,3 +84,25 @@ class AnalysisDocument(Base):
     document_id: Mapped[str] = mapped_column(ForeignKey("supporting_documents.id"), primary_key=True)
     analysis: Mapped[Analysis] = relationship(back_populates="document_links")
     document: Mapped[SupportingDocument] = relationship(back_populates="analysis_links")
+
+
+class Project(Base):
+    __tablename__ = "projects"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    owner_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class AssistantConversation(Base):
+    __tablename__ = "assistant_conversations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    owner_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    paper_ids: Mapped[list] = mapped_column(JSON, nullable=False)
+    messages: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

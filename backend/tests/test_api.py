@@ -41,6 +41,25 @@ def client():
     engine.dispose()
 
 
+def test_legacy_paper_schema_migrates_page_text_column(monkeypatch):
+    import backend.database as database_module
+
+    legacy_engine = create_engine("sqlite://")
+    with legacy_engine.begin() as connection:
+        connection.execute(text("CREATE TABLE papers (id VARCHAR(36) PRIMARY KEY)"))
+        connection.execute(text("CREATE TABLE analyses (id VARCHAR(36) PRIMARY KEY)"))
+    monkeypatch.setattr(database_module, "engine", legacy_engine)
+
+    database_module.migrate_owner_columns()
+
+    columns = {column["name"] for column in inspect(legacy_engine).get_columns("papers")}
+    analysis_columns = {column["name"] for column in inspect(legacy_engine).get_columns("analyses")}
+    assert {"owner_id", "page_texts", "project_id"} <= columns
+    assert {"owner_id", "project_id"} <= analysis_columns
+    database_module.migrate_owner_columns()
+    legacy_engine.dispose()
+
+
 def add_paper(client: TestClient, token: str | None = None) -> str:
     headers = {"Authorization": f"Bearer {token}"} if token else None
     response = client.post(
@@ -72,6 +91,9 @@ def test_pdf_upload_validation_and_database_persistence(client):
     result = client.get("/api/papers")
     assert result.status_code == 200
     assert result.json()["papers"][0]["id"] == paper_id
+    detail = client.get(f"/api/papers/{paper_id}")
+    assert detail.status_code == 200
+    assert detail.json()["extracted_text"].startswith("ABSTRACT")
 
 
 def test_health_and_database_readiness(client):
@@ -121,6 +143,100 @@ def test_custom_analysis_supporting_documents_history_and_pdf_report(client, mon
     assert report.status_code == 200
     assert report.headers["content-type"] == "application/pdf"
     assert report.content.startswith(b"%PDF")
+
+
+def test_projects_create_membership_update_and_delete_preserves_papers(client, monkeypatch):
+    monkeypatch.setattr(
+        main_module,
+        "get_settings",
+        lambda: SimpleNamespace(live_ai_enabled=False),
+    )
+    paper_ids = [add_paper(client), add_paper(client)]
+    created = client.post(
+        "/api/projects",
+        json={"name": "Language evaluation", "description": "Dataset coverage"},
+    )
+    assert created.status_code == 200, created.text
+    project_id = created.json()["id"]
+    invalid_project_analysis = client.post(
+        "/api/analyses",
+        json={"prompt": "Analyze this paper.", "paper_ids": [paper_ids[0]], "project_id": "missing"},
+    )
+    assert invalid_project_analysis.status_code == 404
+    saved_analysis = client.post(
+        "/api/analyses",
+        json={"prompt": "Analyze this paper.", "paper_ids": [paper_ids[0]], "project_id": project_id},
+    )
+    assert saved_analysis.status_code == 200
+    assigned = client.post(
+        f"/api/projects/{project_id}/papers",
+        json={"paper_ids": paper_ids},
+    )
+    assert assigned.status_code == 200
+    assert set(assigned.json()["paper_ids"]) == set(paper_ids)
+    assert {paper["project_id"] for paper in client.get("/api/papers").json()["papers"]} == {project_id}
+
+    updated = client.put(
+        f"/api/projects/{project_id}",
+        json={"name": "Updated project", "description": ""},
+    )
+    assert updated.json()["name"] == "Updated project"
+    project_data = client.get("/api/projects").json()["projects"][0]
+    assert set(project_data["paper_ids"]) == set(paper_ids)
+    assert project_data["analysis_ids"] == [saved_analysis.json()["id"]]
+
+    deleted = client.delete(f"/api/projects/{project_id}")
+    assert deleted.status_code == 200
+    assert client.get("/api/projects").json()["projects"] == []
+    assert all(paper["project_id"] is None for paper in client.get("/api/papers").json()["papers"])
+    assert client.get("/api/analyses").json()["analyses"][0]["id"] == saved_analysis.json()["id"]
+
+
+def test_assistant_persists_owner_scoped_thread_and_requires_matching_papers(client, monkeypatch):
+    paper_id = add_paper(client)
+    monkeypatch.setattr(
+        main_module,
+        "answer_question",
+        lambda question, papers, history: (
+            "The study uses F1 [S1].",
+            [{
+                "paper_id": papers[0].id,
+                "paper_title": papers[0].title,
+                "page_number": 1,
+                "excerpt": "The study evaluates using F1.",
+            }],
+        ),
+    )
+    response = client.post(
+        "/api/assistant/chat",
+        json={"question": "Which metric is used?", "paper_ids": [paper_id]},
+    )
+    assert response.status_code == 200, response.text
+    conversation = response.json()
+    assert conversation["messages"][-1]["sources"][0]["page_number"] == 1
+
+    follow_up = client.post(
+        "/api/assistant/chat",
+        json={
+            "question": "What does that mean?",
+            "paper_ids": [paper_id],
+            "conversation_id": conversation["id"],
+        },
+    )
+    assert follow_up.status_code == 200
+    assert len(follow_up.json()["messages"]) == 4
+    mismatch = client.post(
+        "/api/assistant/chat",
+        json={
+            "question": "Change the source?",
+            "paper_ids": [],
+            "conversation_id": conversation["id"],
+        },
+    )
+    assert mismatch.status_code == 422
+    assert client.get("/api/assistant/conversations").json()["conversations"][0]["id"] == conversation["id"]
+    assert client.delete(f"/api/assistant/conversations/{conversation['id']}").status_code == 200
+    assert client.get("/api/assistant/conversations").json()["conversations"] == []
 
 
 def test_analysis_request_validation_and_missing_paper(client, monkeypatch):

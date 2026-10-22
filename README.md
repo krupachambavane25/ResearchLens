@@ -14,6 +14,9 @@ ResearchLens is a research-paper analysis app that runs locally or as a cloud se
 - Official Google Gen AI Python SDK integration for structured Gemini analysis and semantic embeddings. Evidence excerpts are checked against source text before gaps are kept.
 - Local demo mode when no API key is configured. It extracts actual uploaded text and reports lexical overlap only; it does not invent AI summaries or research gaps.
 - Saved analysis history, similarity heatmap, comparison CSV export, and downloadable PDF reports.
+- Dedicated analytics, multi-paper comparison, project workspace, reports, and settings pages.
+- A paper-grounded Research Assistant with retrieved page excerpts, source citations, and persistent per-account conversations (requires the configured Gemini service).
+- Project membership for papers and saved analyses, with owner-scoped project APIs.
 - Optional Google sign-in with server-side email allowlisting and per-account data isolation.
 - Tests for PDF handling, preprocessing, similarity, evidence validation, API validation, provider errors, persistence, supporting documents, and reports.
 
@@ -126,9 +129,11 @@ Provider references: [Google AI Studio](https://aistudio.google.com/), [Gemini A
 2. Optionally upload supporting PDF, TXT, Markdown, or CSV files within **Custom analysis**.
 3. Select research papers and supporting files, write a prompt, set analysis criteria and questions, select an analysis mode and report format, then review the request.
 4. Run the analysis. Gemini mode produces paper summaries, comparison findings, vector-embedding cosine similarity, potential evidence-linked gaps, and questions. Local mode shows extraction previews and explicitly labeled lexical similarity, with no AI gap claims.
-5. Inspect saved results in **Analysis history**, expand evidence passages, export the comparison matrix as CSV, and download the PDF report.
+5. Inspect saved results in **Analysis history**, open **Analytics** for saved-data charts, expand evidence passages, and export from **Reports** as PDF, HTML, or comparison CSV.
+6. Use **Compare papers** for a dedicated multi-paper workflow, or ask selected-paper questions in **Research assistant**. Chat is unavailable without a backend Gemini key; no fabricated local answers are shown.
+7. Create **Projects**, assign papers, and choose a project when saving a new analysis. Existing projects and chats are private to the authenticated owner when Google sign-in is enabled.
 
-Research gaps are candidates based only on the selected materials, not claims of worldwide novelty. Page numbers are omitted unless reliable page provenance is available; the current extracted-text workflow does not assign page numbers to quotations.
+Research gaps are candidates based only on the selected materials, not claims of worldwide novelty. New uploads retain normalized text per PDF page; cited excerpts are verified against that page and the page number is derived from stored extraction metadata, never trusted from the AI response. Older papers uploaded before page-aware extraction may have verified excerpts without page numbers.
 
 ## API overview
 
@@ -137,6 +142,12 @@ Research gaps are candidates based only on the selected materials, not claims of
 | `GET` | `/api/health` | Provider and service status |
 | `GET` | `/api/ready` | Database readiness check |
 | `GET` | `/api/me` | Verify sign-in and return the current account |
+| `GET`, `POST` | `/api/projects` | List or create projects |
+| `PUT`, `DELETE` | `/api/projects/{project_id}` | Update or delete a project |
+| `POST` | `/api/projects/{project_id}/papers` | Set project paper membership |
+| `GET` | `/api/assistant/conversations` | List saved assistant conversations |
+| `POST` | `/api/assistant/chat` | Retrieve paper excerpts and ask a grounded assistant question |
+| `DELETE` | `/api/assistant/conversations/{conversation_id}` | Delete a saved conversation |
 | `POST` | `/api/papers/upload` | Upload and extract PDF papers |
 | `GET` | `/api/papers` | List library papers |
 | `GET` | `/api/papers/{paper_id}` | Read one paper and extracted text |
@@ -147,6 +158,8 @@ Research gaps are candidates based only on the selected materials, not claims of
 | `GET` | `/api/analyses` | List saved analysis sessions |
 | `GET` | `/api/analyses/{analysis_id}` | Read saved results and sources |
 | `GET` | `/api/analyses/{analysis_id}/report` | Download a PDF report |
+
+Existing databases are upgraded at startup with nullable project-link columns. New `projects` and `assistant_conversations` tables are created automatically. Deleting a project unassigns its papers and analyses; it does not delete them. Deleting a chat removes its stored conversation messages and source excerpts.
 
 ## Tests and build
 
@@ -195,7 +208,8 @@ Backend variables go in the project-root `.env` locally and in the Render API se
 
 - OCR, DOCX, spreadsheets, external literature search, editable metadata, automatic author/keyword/reference extraction, and background job progress tracking are not included. Google authentication is optional; without it, local mode is intended for a trusted single-user environment only.
 - Very long source text is divided into sequential chunks, with a bounded per-analysis context budget; truncated coverage is explicitly disclosed to the model. This is not a full-document guarantee. Review source coverage for long papers.
-- Exact page citations are unavailable because text extraction does not retain stable page offsets in this version.
+- Page numbers are available for verified evidence excerpts from papers uploaded after page-aware extraction was added; older stored papers retain evidence without page numbers.
+- Assistant retrieval uses local lexical matching over page text before sending only the selected excerpts and short conversation history to Gemini; it is not a vector-indexed or external-literature search system.
 - If the UI cannot connect, confirm that the backend is running on port 8000. If CORS errors occur, set `FRONTEND_ORIGIN` to the Vite origin and restart the backend.
 - If Gemini is unavailable, check the key, model availability, network access, API quota, and the backend console. Provider failures are surfaced in the UI.
 - The local SQLite database is created in the backend process's current working directory and ignored by Git. In cloud deployment, use persistent external PostgreSQL and set `AUTH_REQUIRED=true`.

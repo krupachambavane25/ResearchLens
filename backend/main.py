@@ -12,16 +12,37 @@ from sqlalchemy.orm import Session
 from backend.auth import UserIdentity, get_current_user
 from backend.config import get_settings
 from backend.database import Base, engine, get_db, migrate_owner_columns
-from backend.models import Analysis, AnalysisDocument, AnalysisPaper, Paper, SupportingDocument
-from backend.schemas import AnalysisRequest, HealthResponse
+from backend.models import (
+    Analysis,
+    AnalysisDocument,
+    AnalysisPaper,
+    AssistantConversation,
+    Paper,
+    Project,
+    SupportingDocument,
+    utc_now,
+)
+from backend.schemas import (
+    AnalysisRequest,
+    AssistantRequest,
+    HealthResponse,
+    ProjectPapersRequest,
+    ProjectRequest,
+)
 from backend.services.analysis import (
     build_local_analysis,
     cosine_similarity,
 )
-from backend.services.gemini import ProviderError, analyze as live_analyze, embed
+from backend.services.gemini import (
+    ProviderError,
+    analyze as live_analyze,
+    answer_question,
+    embed,
+)
 from backend.services.pdf import (
     PDFValidationError,
     extract_pdf,
+    extract_pdf_pages,
     extract_sections,
     infer_title,
 )
@@ -43,7 +64,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_origin],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -63,6 +84,7 @@ def _paper_data(paper: Paper) -> dict:
         "page_count": paper.page_count,
         "word_count": paper.word_count,
         "sections": paper.sections,
+        "project_id": paper.project_id,
         "created_at": _iso(paper.created_at),
     }
 
@@ -87,6 +109,28 @@ def _analysis_data(analysis: Analysis) -> dict:
     }
 
 
+def _project_data(project: Project, paper_ids: list[str], analysis_ids: list[str] | None = None) -> dict:
+    return {
+        "id": project.id,
+        "name": project.name,
+        "description": project.description,
+        "paper_ids": paper_ids,
+        "analysis_ids": analysis_ids or [],
+        "created_at": _iso(project.created_at),
+    }
+
+
+def _conversation_data(conversation: AssistantConversation) -> dict:
+    return {
+        "id": conversation.id,
+        "title": conversation.title,
+        "paper_ids": conversation.paper_ids,
+        "messages": conversation.messages,
+        "created_at": _iso(conversation.created_at),
+        "updated_at": _iso(conversation.updated_at),
+    }
+
+
 @app.get("/api/health", response_model=HealthResponse)
 def health():
     live = get_settings().live_ai_enabled
@@ -107,6 +151,228 @@ def readiness():
 @app.get("/api/me")
 def current_user(user: UserIdentity = Depends(get_current_user)):
     return {"email": user.email}
+
+
+@app.get("/api/projects")
+def list_projects(db: Session = Depends(get_db), user: UserIdentity = Depends(get_current_user)):
+    projects = db.scalars(
+        select(Project).where(Project.owner_id == user.user_id).order_by(desc(Project.created_at))
+    ).all()
+    papers = db.scalars(select(Paper).where(Paper.owner_id == user.user_id)).all()
+    analyses = db.scalars(select(Analysis).where(Analysis.owner_id == user.user_id)).all()
+    paper_ids_by_project: dict[str, list[str]] = {}
+    analysis_ids_by_project: dict[str, list[str]] = {}
+    for paper in papers:
+        if paper.project_id:
+            paper_ids_by_project.setdefault(paper.project_id, []).append(paper.id)
+    for analysis in analyses:
+        if analysis.project_id:
+            analysis_ids_by_project.setdefault(analysis.project_id, []).append(analysis.id)
+    return {
+        "projects": [
+            _project_data(
+                project,
+                paper_ids_by_project.get(project.id, []),
+                analysis_ids_by_project.get(project.id, []),
+            )
+            for project in projects
+        ]
+    }
+
+
+@app.post("/api/projects")
+def create_project(
+    request: ProjectRequest,
+    db: Session = Depends(get_db),
+    user: UserIdentity = Depends(get_current_user),
+):
+    project = Project(
+        owner_id=user.user_id,
+        name=request.name.strip(),
+        description=request.description.strip(),
+    )
+    if not project.name:
+        raise HTTPException(status_code=422, detail="Project name cannot be blank.")
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+    return _project_data(project, [])
+
+
+@app.put("/api/projects/{project_id}")
+def update_project(
+    project_id: str,
+    request: ProjectRequest,
+    db: Session = Depends(get_db),
+    user: UserIdentity = Depends(get_current_user),
+):
+    project = db.scalar(
+        select(Project).where(Project.id == project_id, Project.owner_id == user.user_id)
+    )
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    project.name = request.name.strip()
+    project.description = request.description.strip()
+    if not project.name:
+        raise HTTPException(status_code=422, detail="Project name cannot be blank.")
+    db.commit()
+    papers = db.scalars(
+        select(Paper).where(Paper.owner_id == user.user_id, Paper.project_id == project.id)
+    ).all()
+    analyses = db.scalars(
+        select(Analysis).where(Analysis.owner_id == user.user_id, Analysis.project_id == project.id)
+    ).all()
+    return _project_data(project, [paper.id for paper in papers], [analysis.id for analysis in analyses])
+
+
+@app.post("/api/projects/{project_id}/papers")
+def assign_project_papers(
+    project_id: str,
+    request: ProjectPapersRequest,
+    db: Session = Depends(get_db),
+    user: UserIdentity = Depends(get_current_user),
+):
+    project = db.scalar(
+        select(Project).where(Project.id == project_id, Project.owner_id == user.user_id)
+    )
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    if len(set(request.paper_ids)) != len(request.paper_ids):
+        raise HTTPException(status_code=422, detail="Select each paper only once.")
+    papers = db.scalars(
+        select(Paper).where(Paper.owner_id == user.user_id, Paper.id.in_(request.paper_ids))
+    ).all() if request.paper_ids else []
+    if len(papers) != len(request.paper_ids):
+        raise HTTPException(status_code=404, detail="One or more papers were not found.")
+    current = db.scalars(
+        select(Paper).where(Paper.owner_id == user.user_id, Paper.project_id == project.id)
+    ).all()
+    for paper in current:
+        paper.project_id = None
+    for paper in papers:
+        paper.project_id = project.id
+    db.commit()
+    return _project_data(project, [paper.id for paper in papers])
+
+
+@app.delete("/api/projects/{project_id}")
+def delete_project(
+    project_id: str,
+    db: Session = Depends(get_db),
+    user: UserIdentity = Depends(get_current_user),
+):
+    project = db.scalar(
+        select(Project).where(Project.id == project_id, Project.owner_id == user.user_id)
+    )
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    papers = db.scalars(
+        select(Paper).where(Paper.owner_id == user.user_id, Paper.project_id == project.id)
+    ).all()
+    for paper in papers:
+        paper.project_id = None
+    analyses = db.scalars(
+        select(Analysis).where(Analysis.owner_id == user.user_id, Analysis.project_id == project.id)
+    ).all()
+    for analysis in analyses:
+        analysis.project_id = None
+    db.delete(project)
+    db.commit()
+    return {"deleted": project_id}
+
+
+@app.get("/api/assistant/conversations")
+def list_assistant_conversations(
+    db: Session = Depends(get_db),
+    user: UserIdentity = Depends(get_current_user),
+):
+    conversations = db.scalars(
+        select(AssistantConversation)
+        .where(AssistantConversation.owner_id == user.user_id)
+        .order_by(desc(AssistantConversation.updated_at))
+        .limit(50)
+    ).all()
+    return {"conversations": [_conversation_data(item) for item in conversations]}
+
+
+@app.post("/api/assistant/chat")
+def assistant_chat(
+    request: AssistantRequest,
+    db: Session = Depends(get_db),
+    user: UserIdentity = Depends(get_current_user),
+):
+    if len(set(request.paper_ids)) != len(request.paper_ids):
+        raise HTTPException(status_code=422, detail="Select each paper only once.")
+    paper_by_id = {
+        paper.id: paper
+        for paper in db.scalars(
+            select(Paper).where(Paper.owner_id == user.user_id, Paper.id.in_(request.paper_ids))
+        ).all()
+    }
+    if len(paper_by_id) != len(request.paper_ids):
+        raise HTTPException(status_code=404, detail="One or more selected papers were not found.")
+    papers = [paper_by_id[paper_id] for paper_id in request.paper_ids]
+
+    conversation = None
+    if request.conversation_id:
+        conversation = db.scalar(
+            select(AssistantConversation).where(
+                AssistantConversation.id == request.conversation_id,
+                AssistantConversation.owner_id == user.user_id,
+            )
+        )
+        if conversation is None:
+            raise HTTPException(status_code=404, detail="Conversation not found.")
+        if conversation.paper_ids != request.paper_ids:
+            raise HTTPException(
+                status_code=422,
+                detail="The selected papers must match the existing conversation.",
+            )
+    history = conversation.messages if conversation else []
+    try:
+        answer, sources = answer_question(request.question, papers, history)
+    except ProviderError as exc:
+        logger.warning("Research assistant request could not be completed: %s", exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    messages = [
+        *history,
+        {"role": "user", "content": request.question},
+        {"role": "assistant", "content": answer, "sources": sources},
+    ][-40:]
+    if conversation is None:
+        conversation = AssistantConversation(
+            owner_id=user.user_id,
+            title=request.question[:120],
+            paper_ids=request.paper_ids,
+            messages=messages,
+        )
+        db.add(conversation)
+    else:
+        conversation.messages = messages
+        conversation.updated_at = utc_now()
+    db.commit()
+    db.refresh(conversation)
+    return _conversation_data(conversation)
+
+
+@app.delete("/api/assistant/conversations/{conversation_id}")
+def delete_assistant_conversation(
+    conversation_id: str,
+    db: Session = Depends(get_db),
+    user: UserIdentity = Depends(get_current_user),
+):
+    conversation = db.scalar(
+        select(AssistantConversation).where(
+            AssistantConversation.id == conversation_id,
+            AssistantConversation.owner_id == user.user_id,
+        )
+    )
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found.")
+    db.delete(conversation)
+    db.commit()
+    return {"deleted": conversation_id}
 
 
 @app.post("/api/papers/upload")
@@ -135,9 +401,10 @@ async def upload_papers(
                 detail=f"{filename} exceeds the {settings.max_upload_mb} MB file size limit.",
             )
         try:
-            text, page_count = extract_pdf(data, filename)
+            page_texts, page_count = extract_pdf_pages(data, filename)
         except PDFValidationError as exc:
             raise HTTPException(status_code=422, detail=f"{filename}: {exc}") from exc
+        text = "\n".join(page_texts)
         paper = Paper(
             owner_id=user.user_id,
             filename=filename[:255],
@@ -145,6 +412,7 @@ async def upload_papers(
             page_count=page_count,
             word_count=len(text.split()),
             extracted_text=text,
+            page_texts=page_texts,
             sections=extract_sections(text),
         )
         db.add(paper)
@@ -269,6 +537,16 @@ def create_analysis(
 ):
     if len(set(request.paper_ids)) != len(request.paper_ids):
         raise HTTPException(status_code=422, detail="Select each paper only once.")
+    project = None
+    if request.project_id:
+        project = db.scalar(
+            select(Project).where(
+                Project.id == request.project_id,
+                Project.owner_id == user.user_id,
+            )
+        )
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found.")
     papers = db.scalars(
         select(Paper).where(
             Paper.id.in_(request.paper_ids), Paper.owner_id == user.user_id
@@ -348,6 +626,7 @@ def create_analysis(
         owner_id=user.user_id,
         prompt=request.prompt,
         mode=request.mode,
+        project_id=project.id if project else None,
         criteria=request.criteria,
         result=result,
         provider=provider,

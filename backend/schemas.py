@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 class AnalysisRequest(BaseModel):
     prompt: str = Field(min_length=5, max_length=4000)
     paper_ids: list[str] = Field(min_length=1, max_length=10)
+    project_id: str | None = None
     document_ids: list[str] = Field(default_factory=list, max_length=10)
     mode: Literal["comprehensive", "similarity", "gaps", "individual"] = "comprehensive"
     criteria: list[Annotated[str, Field(min_length=1, max_length=500)]] = Field(
@@ -15,6 +16,21 @@ class AnalysisRequest(BaseModel):
         default_factory=list, max_length=20
     )
     report_format: Literal["detailed", "concise", "table"] = "detailed"
+
+
+class ProjectRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=2000)
+
+
+class ProjectPapersRequest(BaseModel):
+    paper_ids: list[str] = Field(max_length=500)
+
+
+class AssistantRequest(BaseModel):
+    question: str = Field(min_length=2, max_length=2000)
+    paper_ids: list[str] = Field(min_length=1, max_length=10)
+    conversation_id: str | None = None
 
 
 class PaperResponse(BaseModel):

@@ -20,9 +20,15 @@ The supplied attachment contains the ResearchLens implementation brief. No Stage
 | Prompt safety and untrusted files | `backend/services/gemini.py` system instruction and document delimiters | Provider instructions resist prompt injection; no secrets are placed in model context |
 | Executive and individual summaries | Gemini result schema and result renderer | Live AI only; local mode displays extraction preview rather than fabricated summary |
 | Comparison matrix, methods, dataset/results, limitations | Structured model response plus result renderer | Depends on provider response; output is not independently peer-reviewed |
-| Evidence excerpts and counter-evidence | Gap schema and source-text verification | Exact extracted text match required; page numbers are intentionally omitted |
+| Evidence excerpts and counter-evidence | Gap schema and source-text verification | Exact page-text match is required when page data is available; legacy papers retain unpaged verified excerpts |
 | Saved history and database persistence | SQLAlchemy `Paper`, `Analysis`, supporting-document models | Implemented in local SQLite by default |
 | Downloadable report | `backend/services/reports.py` | Generates a PDF analysis report; verify source quotations in the app |
+| Analytics page | `AnalyticsPage` in `frontend/src/App.tsx` | Visualizes saved analysis counts, extracted methodology signals, evidence mentions, and recorded similarity pairs only |
+| Research assistant | `/api/assistant/chat`, `answer_question`, and `AssistantPage` | Requires Gemini; retrieves selected-paper text chunks lexically, includes source excerpts, and keeps owner-scoped conversations |
+| Research projects | `/api/projects`, `Project`, and `ProjectsPage` | Groups owned papers and explicitly assigned analyses; deleting a project unassigns rather than deletes its contents |
+| Report center | `ReportsPage` | PDF, escaped HTML, and available comparison CSV downloads from saved analyses |
+| Settings page | `SettingsPage` | Shows account and backend state, privacy/data behavior, and server-side configuration guidance; secrets remain uneditable in the browser |
+| Dedicated comparison page | `/compare` route | Reuses the existing multi-paper analysis pipeline; no separate duplicate comparison engine |
 | Settings/API guidance and key security | Settings route, `.env.example`, backend config | Key is server-side only; Gemini provider implemented |
 | API docs and Windows instructions | FastAPI `/docs`, `README.md` | Implemented |
 | Automated tests | `backend/tests/` | Unit/API tests included; run commands in README |
@@ -34,7 +40,8 @@ The supplied attachment contains the ResearchLens implementation brief. No Stage
 - **Provider:** Gemini is the initial provider; an OpenAI adapter was optional in the brief and is not included.
 - **Supported attachments:** research papers use PDF. Optional supporting documents accept PDF, TXT, Markdown, and CSV; DOCX and spreadsheets are rejected with a clear error.
 - **Evidence confidence:** only excerpts exactly found in extracted paper text are accepted; unverified gap candidates are dropped. This improves traceability but can reject valid paraphrased or hyphenated excerpts.
-- **Page citations:** page metadata is not inferred from model output. Page numbers are omitted until stable page-position mapping is implemented.
+- **Page citations:** uploads retain normalized text per PDF page. Evidence excerpts are checked against each page and receive a page number from stored extraction metadata, never from model output. Existing stored papers without page metadata continue to show verified, unpaged evidence.
 - **Processing:** analysis is a synchronous API request with a visible spinner, not a background queue or detailed stage-by-stage progress stream.
 - **Long inputs:** provider context per paper is bounded; this protects request size but can omit content in exceptionally long PDFs.
-- **Identity and hosting:** this is a local-first single-user application with no sign-in, multi-tenant permissions, or public deployment hardening.
+- **Identity and hosting:** Google sign-in and email allowlisting provide owner-scoped API access when configured; local mode remains a trusted single-user deployment.
+- **Assistant retrieval:** retrieval currently uses lexical token overlap rather than a persisted vector index. Gemini is required to generate answers; local mode will not fabricate assistant responses.

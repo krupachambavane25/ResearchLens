@@ -80,7 +80,12 @@ def create_report(analysis) -> bytes:
                 else:
                     text = item.get("title", "") + ": " + item.get("description", "")
                 for evidence in item.get("evidence", []):
-                    text += f" Evidence ({evidence.get('paper_title', 'source')}): “{evidence.get('excerpt', '')}”"
+                    page_number = evidence.get("page_number")
+                    page_reference = f" · p. {page_number}" if isinstance(page_number, int) else ""
+                    text += (
+                        f" Evidence ({evidence.get('paper_title', 'source')}{page_reference}): "
+                        f"“{evidence.get('excerpt', '')}”"
+                    )
                 if item.get("question"):
                     text = item["question"]
             else:

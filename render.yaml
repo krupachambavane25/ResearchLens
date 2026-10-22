@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: researchlens-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/ready
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: AUTH_REQUIRED
+        value: "true"
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: ALLOWED_GOOGLE_EMAILS
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.8-flash
+      - key: GEMINI_EMBEDDING_MODEL
+        value: gemini-embedding-001
+      - key: FRONTEND_ORIGIN
+        sync: false

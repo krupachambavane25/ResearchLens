@@ -14,6 +14,8 @@ ResearchLens is a research-paper analysis app that runs locally or as a cloud se
 - Local demo mode when no API key is configured. It extracts actual uploaded text and reports lexical overlap only; it does not invent AI summaries or research gaps.
 - Saved analysis history, similarity heatmap, comparison CSV export, and downloadable PDF reports.
 - Dedicated analytics, multi-paper comparison, project workspace, reports, and settings pages.
+- A dedicated Research Gaps page that filters saved evidence-linked candidates, surfaces confidence and supporting passages, and summarizes research directions across analyses.
+- Prompt starters for comprehensive literature reviews, method/result comparisons, and evidence-based gap discovery; each page has a distinct visual theme.
 - A paper-grounded Research Assistant with retrieved page excerpts, source citations, and persistent per-account conversations (requires the configured Gemini service).
 - Project membership for papers and saved analyses, with owner-scoped project APIs.
 - Optional Google sign-in with server-side email allowlisting and per-account data isolation.

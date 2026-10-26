@@ -3,7 +3,7 @@ import { Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams, 
 import {
   Activity, ArrowDownToLine, ArrowRight, BarChart3, BookOpen, ChartNoAxesCombined, Check,
   ChevronDown, CircleHelp, Clock3, FilePlus2, FileText, FlaskConical, FolderOpen,
-  LayoutDashboard, Menu, MessageCircle, Search, Settings, ShieldCheck, Sparkles, Trash2, Upload, X,
+  LayoutDashboard, Lightbulb, Menu, MessageCircle, Search, Settings, ShieldCheck, Sparkles, Trash2, Upload, X,
 } from 'lucide-react'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api, setAuthToken, type Analysis, type AssistantConversation, type Paper, type Project, type SupportingDocument } from './api'
@@ -147,6 +147,12 @@ function App() {
     ? location.search.includes('tab=compare') ? 'Compare papers' : 'Custom analysis'
     : navigation.find((item) => item.to.split('?')[0] === location.pathname)?.label
       || (location.pathname.startsWith('/papers/') ? 'Paper detail' : location.pathname.startsWith('/results/') ? 'Analysis results' : 'ResearchLens')
+  const pageTheme = location.pathname === '/analysis'
+    ? location.search.includes('tab=compare') ? 'compare' : 'analysis'
+    : location.pathname === '/papers/:id' || location.pathname.startsWith('/papers/') ? 'paper'
+      : location.pathname.startsWith('/results/') ? 'results'
+        : location.pathname === '/' ? 'dashboard'
+          : location.pathname.slice(1) || 'dashboard'
   const onUpload = async (files: File[]) => {
     const result = await api.upload(files)
     await refresh()
@@ -235,7 +241,7 @@ function App() {
         </div>
       </aside>
       {menuOpen && <button className="mobile-scrim" onClick={() => setMenuOpen(false)} aria-label="Close navigation" />}
-      <main className="main-area">
+      <main className={`main-area page-theme-${pageTheme}`}>
         <header className="topbar">
           <button className="icon-button mobile-menu" onClick={() => setMenuOpen(true)} aria-label="Open navigation"><Menu size={20} /></button>
           <div className="breadcrumbs">Workspace <span>/</span> <b>{pageTitle}</b></div>
@@ -254,6 +260,7 @@ function App() {
             <Route path="/papers/:id" element={<PaperDetailPage />} />
             <Route path="/analysis" element={<CustomAnalysis papers={papers} projects={projects} documents={documents} onUploadDocuments={onUploadDocuments} onAnalyze={onAnalyze} onDownloadReport={onDownloadReport} />} />
             <Route path="/compare" element={<Navigate to="/analysis?tab=compare" replace />} />
+            <Route path="/gaps" element={<ResearchGapsPage analyses={analyses} />} />
             <Route path="/assistant" element={<AssistantPage papers={papers} aiEnabled={aiEnabled} />} />
             <Route path="/projects" element={<ProjectsPage papers={papers} projects={projects} analyses={analyses} onRefresh={refresh} />} />
             <Route path="/reports" element={<ReportsPage analyses={analyses} onDownloadReport={onDownloadReport} />} />
@@ -277,6 +284,7 @@ const navigation = [
   { label: 'Library', to: '/library', icon: FolderOpen },
   { label: 'Projects', to: '/projects', icon: BookOpen },
   { label: 'Compare papers', to: '/analysis?tab=compare', icon: FlaskConical },
+  { label: 'Research gaps', to: '/gaps', icon: Lightbulb },
   { label: 'Custom analysis', to: '/analysis?tab=custom', icon: FlaskConical },
   { label: 'Research assistant', to: '/assistant', icon: MessageCircle },
   { label: 'Reports', to: '/reports', icon: FileText },
@@ -599,6 +607,20 @@ function CustomAnalysis({ papers, projects, documents, onUploadDocuments, onAnal
   const [result, setResult] = useState<Analysis | null>(null)
   const compareCriteria = 'Research objective, Methodology, Algorithm, Dataset, Model, Evaluation metrics, Results, Limitations, Future work'
   const comparisonPrompt = 'Compare the selected research papers across research objectives, methodology, algorithms, datasets, models, evaluation metrics, results, limitations, and future work. Populate each field only from the supplied papers. Use “Not found in document” when evidence is missing. Identify similarities, disagreements, unique contributions, and potential evidence-supported research gaps. Cite exact short excerpts and page numbers when available. Do not infer unsupported facts or claim global novelty.'
+  const promptStarters = [
+    {
+      label: 'Full literature review',
+      prompt: 'Analyze the selected papers as a connected body of literature. For each paper, summarize its research objective, contribution, methodology, model or algorithm, dataset, evaluation metrics, key results, limitations, and stated future work. Compare agreements, disagreements, and trade-offs across papers. Identify recurring limitations and candidate research gaps only when supported by evidence in these sources; explain counter-evidence and uncertainty. Propose specific, feasible research questions and next steps. Cite short exact excerpts with paper titles and page numbers when available. Separate source facts from interpretation, mark missing information as “Not found in document,” and do not claim the gaps are globally novel.'
+    },
+    {
+      label: 'Compare methods and results',
+      prompt: 'Compare the selected papers by research objective, study design, methodology, model or algorithm, data and sample, evaluation metrics, and results. Explain meaningful similarities, differences, and trade-offs; do not treat text similarity as proof of equivalent contributions. Identify which claims are directly supported by each paper, note missing or conflicting evidence, and cite short exact excerpts with paper titles and page numbers when available. Conclude with limitations and practical implications. Use “Not found in document” rather than guessing, and do not claim worldwide novelty.'
+    },
+    {
+      label: 'Find evidence-based gaps',
+      prompt: 'Review the selected papers for recurring limitations, underexplored populations or datasets, methodological weaknesses, missing evaluations, and explicitly stated future work. Report only candidate gaps that can be supported by exact evidence from these papers. For each candidate, explain why it may matter, which papers support it, relevant counter-evidence, confidence, and uncertainty. Suggest a feasible research direction and a testable research question for each. Cite short exact excerpts with page numbers when available. Distinguish an omission in this selected set from a gap in the wider literature; do not claim global novelty.'
+    },
+  ]
   const togglePaper = (id: string) => setSelected((current) => {
     if (current.includes(id)) return current.filter((entry) => entry !== id)
     if (current.length >= (compareMode ? 5 : 10)) return current
@@ -648,7 +670,7 @@ function CustomAnalysis({ papers, projects, documents, onUploadDocuments, onAnal
         {!compareMode && <section className="panel form-section"><div className="section-heading"><span className="section-number">02</span><div><h2>Write your analysis prompt</h2><p>Tell ResearchLens what to focus on. Your instructions are combined with evidence and safety rules.</p></div></div>
           <textarea className="prompt-area" value={prompt} maxLength={4000} onChange={(event) => setPrompt(event.target.value)} placeholder="Compare these papers on [your topic]. Focus on the algorithms used, datasets, evaluation metrics, limitations, and unresolved problems. Identify potential research gaps supported by evidence from the uploaded papers and suggest feasible research questions." />
           <div className="field-foot"><span>Be specific about scope, comparisons, and outputs.</span><span>{prompt.length}/4,000</span></div>
-          <div className="quick-prompt"><span>Try an example:</span><button onClick={() => setPrompt('Compare the research approaches in these papers. Focus on their objectives, methodologies, datasets, results, limitations, and future work. Identify only potential gaps supported by direct evidence from the uploaded material and suggest three feasible research questions.')}>Evidence-based comparison <ArrowRight size={12} /></button></div>
+          <div className="quick-prompt"><span>Prompt starters:</span>{promptStarters.map((starter) => <button key={starter.label} onClick={() => setPrompt(starter.prompt)}>{starter.label} <ArrowRight size={12} /></button>)}</div>
         </section>}
         <section className="panel form-section"><div className="section-heading"><span className="section-number">+</span><div><h2>Supporting documents</h2><p>Optionally include guidelines, notes, datasets, or references as additional context.</p></div></div>
           <label className="support-upload">{documentBusy ? <><span className="spinner purple-spinner" /> Adding document…</> : <><FilePlus2 size={15} /> Add PDF, TXT, Markdown, or CSV<input type="file" accept=".pdf,.txt,.md,.csv,application/pdf,text/plain,text/markdown,text/csv" multiple onChange={(event) => { void uploadDocuments(event.target.files); event.target.value = '' }} /></>}</label>
@@ -681,6 +703,104 @@ function Results({ analysis, onDownloadReport }: { analysis: Analysis; onDownloa
     <GapDiscovery gaps={result.research_gaps || []} demoMode={Boolean(result.demo_mode)} />
     {['repeated_limitations', 'research_questions', 'future_directions', 'limitations'].map((key) => result[key]?.length > 0 && <div className="result-card" key={key}><h3>{key.replace(/_/g, ' ').replace(/^\w/, (letter: string) => letter.toUpperCase())}</h3>{result[key].map((item: any, index: number) => <StructuredItem key={index} item={item} />)}</div>)}
   </section>
+}
+
+function ResearchGapsPage({ analyses }: { analyses: Analysis[] }) {
+  const [category, setCategory] = useState('All')
+  const colors = ['#1474d4', '#10a7a0', '#f0a23a', '#7865d5', '#e46e61', '#438a63', '#48a8ce']
+  const gaps = analyses.flatMap((analysis) =>
+    (analysis.result.research_gaps || []).map((gap: any) => ({
+      analysis,
+      gap,
+      category: typeof gap.category === 'string' && gap.category.trim()
+        ? gap.category.trim()
+        : researchGapCategory(gap.title),
+    })),
+  )
+  const categories = [...new Set(gaps.map((entry) => entry.category))].sort()
+  const visibleGaps = category === 'All' ? gaps : gaps.filter((entry) => entry.category === category)
+  const highPriority = gaps.filter(({ gap }) => typeof gap.confidence === 'number' && gap.confidence >= 0.8).length
+  const confidenceValues = gaps
+    .map(({ gap }) => gap.confidence)
+    .filter((confidence): confidence is number => typeof confidence === 'number')
+  const averageConfidence = confidenceValues.length
+    ? Math.round(confidenceValues.reduce((sum, confidence) => sum + confidence, 0) / confidenceValues.length * 100)
+    : 0
+  const distribution = categories.map((name, index) => ({
+    name,
+    count: gaps.filter((entry) => entry.category === name).length,
+    color: colors[index % colors.length],
+  }))
+  let angle = 0
+  const donut = distribution.length
+    ? distribution.map((entry) => {
+      const start = angle
+      angle += entry.count / gaps.length * 360
+      return `${entry.color} ${start}deg ${angle}deg`
+    }).join(', ')
+    : '#e9edf2 0deg 360deg'
+  const directions = analyses.flatMap((analysis) =>
+    (analysis.result.future_directions || []).map((item: any) => ({
+      text: typeof item === 'string' ? item : item.description || item.title || item.direction || '',
+      analysis,
+    })),
+  ).filter((item) => item.text).slice(0, 5)
+
+  return <>
+    <PageHeading eyebrow="EVIDENCE-LINKED DISCOVERY" title="Research gap discovery" description="Explore candidate gaps identified across your saved analyses. Every gap is scoped to the papers you reviewed, with evidence and uncertainty kept visible." action={<NavLink to="/analysis" className="button primary"><Sparkles size={15} /> Run an analysis</NavLink>} />
+    <section className="gap-overview-metrics">
+      <Metric icon={<Lightbulb size={17} />} label="Candidate gaps" value={gaps.length.toString()} note="Across saved analyses" color="blue" />
+      <Metric icon={<ShieldCheck size={17} />} label="High confidence" value={highPriority.toString()} note="Confidence of 80% or higher" color="purple" />
+      <Metric icon={<BookOpen size={17} />} label="Research areas" value={categories.length.toString()} note="Evidence-derived categories" color="green" />
+      <Metric icon={<ChartNoAxesCombined size={17} />} label="Average confidence" value={`${averageConfidence}%`} note={confidenceValues.length ? 'Across scored candidates' : 'No scored candidates yet'} color="amber" />
+    </section>
+    <div className="gap-discovery-layout">
+      <div className="gap-discovery-main">
+        <section className="panel gap-results-panel">
+          <div className="panel-heading"><div><span className="eyebrow">SAVED FINDINGS</span><h2>Potential research gaps</h2></div><span className="library-total">{visibleGaps.length} shown</span></div>
+          <div className="gap-filter-row"><button className={category === 'All' ? 'active' : ''} onClick={() => setCategory('All')}>All <span>{gaps.length}</span></button>{categories.map((name) => <button key={name} className={category === name ? 'active' : ''} onClick={() => setCategory(name)}>{name} <span>{gaps.filter((entry) => entry.category === name).length}</span></button>)}</div>
+          {visibleGaps.length ? <div className="gap-card-grid">{visibleGaps.map(({ analysis, gap, category: gapCategory }, index) => {
+            const papers = analysis.result.papers_analyzed || []
+            const evidence = Array.isArray(gap.evidence) ? gap.evidence : []
+            const paperTitles = [...new Set<string>(evidence.map((item: any) => item.paper_title).filter((title: unknown): title is string => typeof title === 'string' && title.length > 0))]
+            return <article className="gap-research-card discovery-gap-card" key={`${analysis.id}-${index}`}>
+              <div className="gap-card-meta"><span>{gapCategory}</span><b className={typeof gap.confidence === 'number' && gap.confidence >= 0.8 ? 'priority-high' : ''}>{typeof gap.confidence === 'number' ? `${Math.round(gap.confidence * 100)}% confidence` : 'Candidate'}</b></div>
+              <h3>{gap.title || 'Potential research gap'}</h3>
+              <p>{gap.description || 'Review the cited evidence and analysis context for details.'}</p>
+              {paperTitles.length > 0 && <div className="gap-supporting-papers"><small>SUPPORTING PAPERS</small><div>{paperTitles.map((title: string) => <span key={title}>{title}</span>)}</div></div>}
+              {gap.suggested_direction && <div className="gap-direction"><Sparkles size={13} /><div><b>Suggested research direction</b><span>{gap.suggested_direction}</span></div></div>}
+              <details className="gap-evidence-details"><summary>View evidence ({evidence.length} sources)<ChevronDown size={14} /></summary>
+                {evidence.map((source: any, sourceIndex: number) => <blockquote key={`${source.paper_id}-${sourceIndex}`}><p>“{source.excerpt}”</p><cite>{source.paper_title}{source.page_number ? ` · p. ${source.page_number}` : ''}</cite></blockquote>)}
+                {gap.uncertainty && <p className="uncertainty"><b>Uncertainty:</b> {gap.uncertainty}</p>}
+                {gap.counter_evidence?.length > 0 && <p className="gap-counter-evidence"><b>Counter-evidence:</b> {gap.counter_evidence.join(' ')}</p>}
+              </details>
+              <div className="gap-result-footer"><span>{papers.length} source {papers.length === 1 ? 'paper' : 'papers'} · {new Date(analysis.created_at).toLocaleDateString()}</span><NavLink to={`/results/${analysis.id}`}>View full analysis <ArrowRight size={13} /></NavLink></div>
+            </article>
+          })}</div> : <div className="gaps-empty-state"><Lightbulb size={22} /><h3>{gaps.length ? 'No gaps in this category' : 'No saved research gaps yet'}</h3><p>{gaps.length ? 'Choose another category to see its findings.' : 'Run a comprehensive or research-gap analysis on your papers. Candidate gaps appear here only when the analysis has supporting evidence.'}</p>{!gaps.length && <NavLink to="/analysis" className="button secondary">Start evidence-based analysis <ArrowRight size={14} /></NavLink>}</div>}
+        </section>
+      </div>
+      <aside className="gap-discovery-aside">
+        <section className="panel gap-distribution-panel"><div className="panel-heading"><div><span className="eyebrow">OVERVIEW</span><h2>Gap distribution</h2></div></div>
+          {distribution.length ? <><div className="gap-donut" style={{ background: `conic-gradient(${donut})` }}><span>{gaps.length}<small>gaps</small></span></div><div className="gap-legend">{distribution.map((entry) => <div key={entry.name}><span style={{ background: entry.color }} />{entry.name}<b>{entry.count}</b></div>)}</div></> : <p className="gap-aside-empty">Category counts will appear after an analysis identifies evidence-supported candidates.</p>}
+        </section>
+        <section className="panel gap-directions-panel"><div className="panel-heading"><div><span className="eyebrow">NEXT STEPS</span><h2>Recommended directions</h2></div></div>
+          {directions.length ? <ol>{directions.map((direction, index) => <li key={`${direction.analysis.id}-${index}`}><span>{index + 1}</span><div><p>{direction.text}</p><NavLink to={`/results/${direction.analysis.id}`}>Source analysis <ArrowRight size={12} /></NavLink></div></li>)}</ol> : <p className="gap-aside-empty">Research directions from completed analyses will appear here.</p>}
+        </section>
+        <div className="gap-scope-note"><ShieldCheck size={16} /><p><b>Interpret with care</b> These are candidates based on your selected papers, not proof of worldwide novelty. Review the supporting passages and counter-evidence before drawing conclusions.</p></div>
+      </aside>
+    </div>
+  </>
+}
+
+function researchGapCategory(title: unknown) {
+  const text = String(title || '').toLowerCase()
+  if (text.includes('dataset') || text.includes('data set')) return 'Dataset'
+  if (text.includes('method') || text.includes('approach')) return 'Methodology'
+  if (text.includes('scale') || text.includes('latency')) return 'Scalability'
+  if (text.includes('explain')) return 'Explainability'
+  if (text.includes('evaluat') || text.includes('metric')) return 'Evaluation'
+  if (text.includes('future')) return 'Future work'
+  return 'Other'
 }
 
 function GapDiscovery({ gaps, demoMode }: { gaps: any[]; demoMode: boolean }) {

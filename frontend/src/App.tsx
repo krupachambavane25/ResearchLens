@@ -861,16 +861,18 @@ function StructuredItem({ item }: { item: any }) {
 
 function structuredItemFields(item: any): { title: string; description: string } {
   if (typeof item === 'string') return { title: item, description: '' }
-  const titleFields = ['title', 'name', 'question', 'finding', 'direction', 'limitation', 'recommendation', 'gap']
-  const descriptionFields = ['description', 'rationale', 'details', 'explanation', 'summary', 'text', 'finding', 'direction', 'limitation', 'recommendation']
-  const firstText = (fields: string[]) => fields.find((field) => typeof item?.[field] === 'string' && item[field].trim())
-  const titleField = firstText(titleFields)
+  const nested = Object.values(item || {}).find((value) => value && typeof value === 'object' && !Array.isArray(value))
+  const source = { ...(nested || {}), ...(item || {}) }
+  const titleFields = ['title', 'name', 'question', 'research_question', 'open_question', 'finding', 'gap', 'gap_statement', 'research_gap', 'limitation', 'issue', 'constraint', 'direction', 'future_direction', 'recommendation', 'next_step', 'suggested_direction', 'point', 'text', 'content']
+  const descriptionFields = ['description', 'rationale', 'details', 'explanation', 'summary', 'why_it_matters', 'motivation', 'implication', 'expected_impact', 'finding', 'gap_statement', 'research_gap', 'direction', 'limitation', 'recommendation', 'text', 'content']
+  const titleField = titleFields.find((field) => typeof source[field] === 'string' && source[field].trim() && source[field].trim().toLowerCase() !== 'finding')
   const descriptionField = descriptionFields.find((field) =>
-    field !== titleField && typeof item?.[field] === 'string' && item[field].trim(),
+    field !== titleField && typeof source[field] === 'string' && source[field].trim() && source[field].trim().toLowerCase() !== 'finding',
   )
+  const fallbackText = Object.values(source).find((value) => typeof value === 'string' && value.trim() && value.trim().toLowerCase() !== 'finding')
   return {
-    title: titleField ? item[titleField] : 'Finding',
-    description: descriptionField ? item[descriptionField] : '',
+    title: titleField ? source[titleField] : descriptionField ? source[descriptionField] : typeof fallbackText === 'string' ? fallbackText : 'No details returned — rerun the analysis.',
+    description: descriptionField && descriptionField !== titleField ? source[descriptionField] : '',
   }
 }
 

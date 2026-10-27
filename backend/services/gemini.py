@@ -20,6 +20,34 @@ from backend.services.analysis import (
 MAX_TOTAL_PAPER_CONTEXT_CHARS = 180_000
 MAX_TEXT_CHUNK_CHARS = 8_000
 MAX_EMBEDDING_CHUNK_CHARS = 4_000
+TEXT_ENTRY = {
+    "type": "OBJECT",
+    "properties": {
+        "title": {"type": "STRING"},
+        "description": {"type": "STRING"},
+    },
+    "required": ["title", "description"],
+}
+QUESTION_ENTRY = {
+    "type": "OBJECT",
+    "properties": {
+        "question": {"type": "STRING"},
+        "rationale": {"type": "STRING"},
+    },
+    "required": ["question", "rationale"],
+}
+RESEARCH_GAP_ENTRY = {
+    "type": "OBJECT",
+    "properties": {
+        "title": {"type": "STRING"},
+        "description": {"type": "STRING"},
+        "confidence": {"type": "NUMBER"},
+        "evidence": {"type": "ARRAY", "items": {"type": "OBJECT"}},
+        "counter_evidence": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "uncertainty": {"type": "STRING"},
+    },
+    "required": ["title", "description", "evidence"],
+}
 ASSISTANT_STOP_WORDS = frozenset(
     {
         "about", "after", "again", "all", "also", "and", "are", "because", "been",
@@ -166,11 +194,11 @@ def analyze(
                             "paper_summaries": {"type": "ARRAY", "items": {"type": "OBJECT"}},
                             "comparison": {"type": "ARRAY", "items": {"type": "OBJECT"}},
                             "similarities": {"type": "ARRAY", "items": {"type": "OBJECT"}},
-                            "repeated_limitations": {"type": "ARRAY", "items": {"type": "OBJECT"}},
-                            "research_gaps": {"type": "ARRAY", "items": {"type": "OBJECT"}},
-                            "research_questions": {"type": "ARRAY", "items": {"type": "OBJECT"}},
-                            "future_directions": {"type": "ARRAY", "items": {"type": "OBJECT"}},
-                            "limitations": {"type": "ARRAY", "items": {"type": "OBJECT"}},
+                            "repeated_limitations": {"type": "ARRAY", "items": TEXT_ENTRY},
+                            "research_gaps": {"type": "ARRAY", "items": RESEARCH_GAP_ENTRY},
+                            "research_questions": {"type": "ARRAY", "items": QUESTION_ENTRY},
+                            "future_directions": {"type": "ARRAY", "items": TEXT_ENTRY},
+                            "limitations": {"type": "ARRAY", "items": TEXT_ENTRY},
                             "confidence": {"type": "NUMBER"},
                         },
                         "required": [

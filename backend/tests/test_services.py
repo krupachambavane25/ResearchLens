@@ -200,6 +200,92 @@ def test_ai_structured_response_keeps_only_verifiable_gap_evidence():
     ]
 
 
+def test_ai_structured_sections_normalize_model_aliases_and_drop_placeholders():
+    response = {
+        "executive_summary": "A grounded summary.",
+        "paper_summaries": [],
+        "comparison": [],
+        "similarities": [],
+        "repeated_limitations": [
+            {"finding": "Small sample size limits generalization."},
+            {"title": "Finding"},
+            {"issue": {"summary": "Only one dataset was evaluated."}},
+        ],
+        "research_gaps": [],
+        "research_questions": [
+            {"research_question": "Does the method generalize to other populations?"},
+        ],
+        "future_directions": [
+            {"recommendation": "Evaluate the method on a larger multi-site cohort."},
+        ],
+        "limitations": [
+            {"constraint": "The study used a single-site sample."},
+        ],
+        "confidence": 0.8,
+    }
+
+    validated = validate_ai_result(response, [])
+
+    assert validated["repeated_limitations"] == [
+        {"title": "Small sample size limits generalization.", "description": ""},
+        {"title": "Only one dataset was evaluated.", "description": ""},
+    ]
+    assert validated["research_questions"] == [
+        {"title": "Does the method generalize to other populations?", "description": ""},
+    ]
+    assert validated["future_directions"] == [
+        {"title": "Evaluate the method on a larger multi-site cohort.", "description": ""},
+    ]
+    assert validated["limitations"] == [
+        {"title": "The study used a single-site sample.", "description": ""},
+    ]
+
+
+def test_ai_research_gap_alias_is_normalized_and_evidence_is_verified():
+    paper = Paper(
+        id="paper-id",
+        filename="study.pdf",
+        title="Study",
+        extracted_text="The authors note that evaluation on rural clinics remains future work.",
+        page_texts=["The authors note that evaluation on rural clinics remains future work."],
+        sections={},
+        page_count=1,
+        word_count=13,
+    )
+    response = {
+        "executive_summary": "A grounded summary.",
+        "paper_summaries": [],
+        "comparison": [],
+        "similarities": [],
+        "repeated_limitations": [],
+        "research_gaps": [
+            {
+                "gap_statement": "Performance in rural clinics is untested.",
+                "rationale": "The paper explicitly leaves that setting for future work.",
+                "supporting_evidence": [
+                    {
+                        "paper_id": paper.id,
+                        "quote": "evaluation on rural clinics remains future work.",
+                        "page_number": 99,
+                    }
+                ],
+            }
+        ],
+        "research_questions": [],
+        "future_directions": [],
+        "limitations": [],
+        "confidence": 0.8,
+    }
+
+    validated = validate_ai_result(response, [paper])
+
+    gap = validated["research_gaps"][0]
+    assert gap["title"] == "Performance in rural clinics is untested."
+    assert gap["description"] == "The paper explicitly leaves that setting for future work."
+    assert gap["evidence"][0]["excerpt"] == "evaluation on rural clinics remains future work."
+    assert gap["evidence"][0]["page_number"] == 1
+
+
 def test_gap_evidence_page_is_derived_from_source_not_model_output():
     paper = Paper(
         id="paper-id",
@@ -554,6 +640,16 @@ def test_gemini_analysis_uses_sdk_json_schema_and_validates_result(monkeypatch):
     assert json.loads(captured["contents"])["user_instructions"] == "Compare methods."
     assert captured["config"].response_mime_type == "application/json"
     assert captured["config"].response_schema["required"]
+    schema_properties = captured["config"].response_schema["properties"]
+    assert schema_properties["research_gaps"]["items"]["required"] == [
+        "title",
+        "description",
+        "evidence",
+    ]
+    assert schema_properties["research_questions"]["items"]["required"] == [
+        "question",
+        "rationale",
+    ]
     assert captured["closed"] is True
 
 

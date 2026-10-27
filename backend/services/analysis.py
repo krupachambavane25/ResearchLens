@@ -20,17 +20,88 @@ For each research gap provide title, description, confidence (0-1), evidence (ar
 uncertainty. Every gap must be supported by exact short excerpts from supplied material.
 Use the marked PDF page number for evidence when the source includes page markers.
 Keep each excerpt within a single page. Set page_number to null when page provenance is unavailable.
-If evidence is insufficient, return no gaps and explain that limitation.
+When the user asks for research gaps, prioritize concrete open problems supported by
+the selected papers' stated limitations, future-work statements, or differences between
+their methods and findings. A limitation alone is not automatically a research gap:
+explain what remains unanswered and support it with exact source excerpts. Do not claim
+global novelty. If no defensible candidate is supported, return no gaps.
 Always provide substantive entries in repeated_limitations, research_questions,
 future_directions, and limitations when supported by the supplied material, regardless
 of whether the user explicitly names each section. Return an empty array only when no
-supported item is available. Use title and description for findings, question and
-rationale for research questions, and include evidence when available. Never return
-placeholder labels such as "Finding" without explanatory content.
+supported item is available. Each entry must be an object with a meaningful title and
+description; research question entries must also include a question and rationale.
+Never return generic labels such as "Finding" as the only content. Include evidence
+excerpts only when they can be quoted exactly from the supplied papers.
 Distinguish extracted facts from interpretations. Avoid unsupported conclusions."""
 
 MAX_PROMPT_CHARS = 4000
 MAX_CONTEXT_CHARS = 90000
+_STRUCTURED_FIELDS = {
+    "repeated_limitations": (
+        ("title", "name", "limitation", "finding", "issue", "theme", "pattern", "point", "text", "content"),
+        ("description", "details", "rationale", "explanation", "summary", "implication"),
+    ),
+    "research_questions": (
+        ("question", "research_question", "open_question", "title", "name", "text", "content"),
+        ("rationale", "description", "why_it_matters", "motivation", "details", "explanation"),
+    ),
+    "future_directions": (
+        ("title", "direction", "future_direction", "recommendation", "next_step", "suggested_direction", "point", "text", "content"),
+        ("description", "rationale", "details", "explanation", "expected_impact", "summary"),
+    ),
+    "limitations": (
+        ("title", "limitation", "finding", "issue", "constraint", "caveat", "point", "text", "content"),
+        ("description", "details", "rationale", "explanation", "impact", "summary"),
+    ),
+}
+_GAP_TITLE_FIELDS = ("title", "gap", "research_gap", "gap_statement", "finding", "open_question")
+_GAP_DESCRIPTION_FIELDS = (
+    "description", "rationale", "explanation", "implication", "why_it_matters", "details",
+)
+_PLACEHOLDER_TEXT = frozenset({"finding", "n/a", "na", "none", "not available", "not provided"})
+
+
+def _meaningful_text(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    text = value.strip()
+    return "" if text.casefold().rstrip(".:") in _PLACEHOLDER_TEXT else text
+
+
+def _normalize_structured_items(items: list[Any], fields: tuple[tuple[str, ...], tuple[str, ...]]) -> list[dict[str, Any]]:
+    title_fields, description_fields = fields
+    normalized = []
+    for item in items:
+        if isinstance(item, str):
+            title = _meaningful_text(item)
+            if title:
+                normalized.append({"title": title, "description": ""})
+            continue
+        if not isinstance(item, dict):
+            continue
+
+        nested = next(
+            (value for value in item.values() if isinstance(value, dict)),
+            {},
+        )
+        source = {**nested, **item}
+        title = next(
+            (_meaningful_text(source.get(field)) for field in title_fields if _meaningful_text(source.get(field))),
+            "",
+        )
+        description = next(
+            (
+                _meaningful_text(source.get(field))
+                for field in description_fields
+                if field not in title_fields and _meaningful_text(source.get(field))
+            ),
+            "",
+        )
+        if not title and description:
+            title, description = description, ""
+        if title:
+            normalized.append({"title": title, "description": description})
+    return normalized
 
 
 def _tokens(text: str) -> Counter:
@@ -250,22 +321,44 @@ def validate_ai_result(result: Any, papers: list[Paper]) -> dict[str, Any]:
                 for text_field in ("title", "name", "question", "description"):
                     if text_field in item and not isinstance(item[text_field], str):
                         item[text_field] = ""
+        if field in _STRUCTURED_FIELDS:
+            result[field] = _normalize_structured_items(result[field], _STRUCTURED_FIELDS[field])
 
     verified_gaps = []
-    for gap in result["research_gaps"]:
-        if (
-            not isinstance(gap, dict)
-            or not isinstance(gap.get("title"), str)
-            or not isinstance(gap.get("description"), str)
-            or not isinstance(gap.get("evidence"), list)
-        ):
+    for raw_gap in result["research_gaps"]:
+        if not isinstance(raw_gap, dict):
+            continue
+        nested_gap = next(
+            (value for value in raw_gap.values() if isinstance(value, dict)),
+            {},
+        )
+        gap = {**nested_gap, **raw_gap}
+        title = next(
+            (_meaningful_text(gap.get(field)) for field in _GAP_TITLE_FIELDS if _meaningful_text(gap.get(field))),
+            "",
+        )
+        description = next(
+            (_meaningful_text(gap.get(field)) for field in _GAP_DESCRIPTION_FIELDS if _meaningful_text(gap.get(field))),
+            "",
+        )
+        if not title and description:
+            title, description = description, ""
+        raw_evidence = gap.get("evidence", gap.get("supporting_evidence", gap.get("sources")))
+        if not title or not isinstance(raw_evidence, list):
             continue
         evidence = []
-        for item in gap["evidence"]:
+        for item in raw_evidence:
             if not isinstance(item, dict) or item.get("paper_id") not in allowed:
                 continue
             paper = allowed[item["paper_id"]]
-            excerpt = str(item.get("excerpt", "")).strip()
+            excerpt = next(
+                (
+                    value.strip()
+                    for field in ("excerpt", "quote", "passage", "text")
+                    if isinstance((value := item.get(field)), str) and value.strip()
+                ),
+                "",
+            )
             page_number = None
             page_texts = paper.page_texts or []
             if excerpt and page_texts:
@@ -293,6 +386,8 @@ def validate_ai_result(result: Any, papers: list[Paper]) -> dict[str, Any]:
                     }
                 )
         if evidence:
+            gap["title"] = title
+            gap["description"] = description
             gap["evidence"] = evidence
             gap["counter_evidence"] = [
                 item for item in gap.get("counter_evidence", []) if isinstance(item, str)

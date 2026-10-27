@@ -21,6 +21,12 @@ uncertainty. Every gap must be supported by exact short excerpts from supplied m
 Use the marked PDF page number for evidence when the source includes page markers.
 Keep each excerpt within a single page. Set page_number to null when page provenance is unavailable.
 If evidence is insufficient, return no gaps and explain that limitation.
+Always provide substantive entries in repeated_limitations, research_questions,
+future_directions, and limitations when supported by the supplied material, regardless
+of whether the user explicitly names each section. Return an empty array only when no
+supported item is available. Use title and description for findings, question and
+rationale for research questions, and include evidence when available. Never return
+placeholder labels such as "Finding" without explanatory content.
 Distinguish extracted facts from interpretations. Avoid unsupported conclusions."""
 
 MAX_PROMPT_CHARS = 4000

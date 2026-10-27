@@ -341,6 +341,69 @@ def test_assistant_retrieves_selected_page_and_requests_grounded_answer(monkeypa
     assert captured["closed"] is True
 
 
+def test_assistant_uses_recent_user_question_to_retrieve_follow_up_evidence(monkeypatch):
+    import backend.services.gemini as gemini
+
+    paper = Paper(
+        id="source-paper",
+        filename="study.pdf",
+        title="Evaluation study",
+        extracted_text=(
+            "The authors propose a model for image classification.\n\n"
+            "The model achieved 92 percent accuracy on the ImageNet validation set."
+        ),
+        page_texts=[
+            "The authors propose a model for image classification.",
+            "The model achieved 92 percent accuracy on the ImageNet validation set.",
+        ],
+        page_count=2,
+        word_count=17,
+        sections={},
+    )
+    monkeypatch.setattr(
+        gemini,
+        "get_settings",
+        lambda: SimpleNamespace(live_ai_enabled=True, gemini_api_key="test-key", gemini_model="test-model"),
+    )
+    captured = {}
+
+    class MockModels:
+        def generate_content(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(text="The score was 92 percent [S1].")
+
+    class MockClient:
+        models = MockModels()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(gemini, "_client", lambda _key: MockClient())
+
+    _, sources = gemini.answer_question(
+        "What was its score?",
+        [paper],
+        [
+            {"role": "user", "content": "What accuracy did the image classification model achieve?"},
+            {
+                "role": "assistant",
+                "content": "The model achieved 92 percent accuracy [S1].",
+                "sources": [
+                    {
+                        "paper_id": paper.id,
+                        "paper_title": paper.title,
+                        "page_number": 2,
+                        "excerpt": "The model achieved 92 percent accuracy.",
+                    }
+                ],
+            },
+        ],
+    )
+
+    assert "92 percent accuracy" in sources[0]["excerpt"]
+    assert "What accuracy did the image classification model achieve?" in captured["contents"]
+
+
 def test_report_includes_verified_evidence_page_number():
     analysis = SimpleNamespace(
         prompt="Analyze the source.",
@@ -367,6 +430,29 @@ def test_report_includes_verified_evidence_page_number():
     document.close()
 
     assert "Paged study · p. 2" in report_text
+
+
+def test_report_includes_structured_analysis_sections_and_finding_aliases():
+    analysis = SimpleNamespace(
+        prompt="Analyze the selected papers.",
+        result={
+            "repeated_limitations": [{"finding": "Small sample sizes constrain generalization."}],
+            "research_questions": [{"question": "How does performance vary across regions?", "rationale": "Regional coverage is uneven."}],
+            "future_directions": [{"direction": "Evaluate the method on larger datasets."}],
+            "limitations": [{"text": "Only the selected papers were analyzed."}],
+        },
+    )
+
+    report = create_report(analysis)
+    document = pymupdf.open(stream=report, filetype="pdf")
+    report_text = "\n".join(page.get_text() for page in document)
+    document.close()
+
+    assert "Small sample sizes constrain generalization." in report_text
+    assert "How does performance vary across regions?" in report_text
+    assert "Regional coverage is uneven." in report_text
+    assert "Evaluate the method on larger datasets." in report_text
+    assert "Only the selected papers were analyzed." in report_text
 
 
 def test_embedding_batches_bounded_chunks_and_averages_vectors(monkeypatch):

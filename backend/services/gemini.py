@@ -1,6 +1,8 @@
 import json
+import math
 import re
 import time
+from collections import Counter
 from collections.abc import Callable
 from typing import TypeVar
 
@@ -18,6 +20,19 @@ from backend.services.analysis import (
 MAX_TOTAL_PAPER_CONTEXT_CHARS = 180_000
 MAX_TEXT_CHUNK_CHARS = 8_000
 MAX_EMBEDDING_CHUNK_CHARS = 4_000
+ASSISTANT_STOP_WORDS = frozenset(
+    {
+        "about", "after", "again", "all", "also", "and", "are", "because", "been",
+        "before", "being", "between", "both", "but", "can", "could", "did", "does",
+        "doing", "down", "during", "each", "for", "from", "further", "had", "has",
+        "have", "having", "here", "how", "into", "its", "itself", "just", "more",
+        "most", "not", "off", "once", "only", "other", "our", "out", "over", "same",
+        "should", "some", "such", "than", "that", "the", "their", "them", "then",
+        "there", "these", "they", "this", "those", "through", "under", "until", "very",
+        "was", "were", "what", "when", "where", "which", "while", "who", "why", "with",
+        "would", "you", "your",
+    }
+)
 T = TypeVar("T")
 
 
@@ -193,29 +208,91 @@ def answer_question(question: str, papers: list[Paper], history: list[dict]) -> 
     if not settings.live_ai_enabled:
         raise ProviderError("The research assistant requires a configured Gemini API key.")
 
-    query_terms = set(re.findall(r"[a-z0-9]{2,}", question.casefold()))
-    retrieved = []
+    def content_terms(text: str) -> list[str]:
+        return [
+            term
+            for term in re.findall(r"[a-z0-9]{2,}", text.casefold())
+            if term not in ASSISTANT_STOP_WORDS
+        ]
+
+    question_terms = content_terms(question)
+    history_terms = [
+        term
+        for item in history[-12:]
+        if isinstance(item, dict)
+        and item.get("role") == "user"
+        and isinstance(item.get("content"), str)
+        for term in content_terms(item["content"])
+    ]
+    follow_up_references = {"it", "its", "they", "their", "them", "this", "that", "these", "those"}
+    is_follow_up = bool(follow_up_references.intersection(re.findall(r"[a-z0-9]{2,}", question.casefold())))
+    prior_sources = {
+        (source.get("paper_id"), source.get("page_number"))
+        for item in history[-8:]
+        if isinstance(item, dict) and item.get("role") == "assistant"
+        for source in item.get("sources", [])
+        if isinstance(source, dict)
+        and isinstance(source.get("paper_id"), str)
+        and (source.get("page_number") is None or isinstance(source.get("page_number"), int))
+    }
+    candidates = []
     for paper in papers:
         pages = paper.page_texts or [paper.extracted_text]
         for page_number, page_text in enumerate(pages, start=1):
-            for start in range(0, len(page_text), 1800):
-                excerpt = page_text[start : start + 1800].strip()
+            for start in range(0, len(page_text), 1200):
+                excerpt = page_text[start : start + 1200].strip()
                 if not excerpt:
                     continue
-                words = re.findall(r"[a-z0-9]{2,}", excerpt.casefold())
-                overlap = sum(1 for word in words if word in query_terms)
-                if overlap:
-                    retrieved.append(
-                        {
-                            "paper_id": paper.id,
-                            "paper_title": paper.title,
-                            "page_number": page_number if paper.page_texts else None,
-                            "excerpt": excerpt[:1200],
-                            "relevance": overlap / max(len(words), 1),
-                        }
-                    )
-    retrieved.sort(key=lambda item: item["relevance"], reverse=True)
-    sources = retrieved[:6]
+                candidates.append(
+                    {
+                        "paper_id": paper.id,
+                        "paper_title": paper.title,
+                        "page_number": page_number if paper.page_texts else None,
+                        "excerpt": excerpt,
+                        "terms": content_terms(excerpt),
+                    }
+                )
+
+    if candidates:
+        document_frequency = Counter(
+            term
+            for candidate in candidates
+            for term in set(candidate["terms"])
+        )
+        average_length = sum(len(candidate["terms"]) for candidate in candidates) / len(candidates) or 1
+        document_count = len(candidates)
+
+        def score(query: list[str], candidate: dict) -> float:
+            frequencies = Counter(candidate["terms"])
+            length_normalizer = 1.2 * (0.25 + 0.75 * len(candidate["terms"]) / average_length)
+            return sum(
+                math.log1p(
+                    (document_count - document_frequency[term] + 0.5)
+                    / (document_frequency[term] + 0.5)
+                )
+                * (frequencies[term] * 2.2)
+                / (frequencies[term] + length_normalizer)
+                for term in set(query)
+            )
+
+        for candidate in candidates:
+            candidate["relevance"] = score(question_terms, candidate) + 0.25 * score(
+                history_terms, candidate
+            ) + (
+                1.0
+                if is_follow_up
+                and (
+                    (candidate["paper_id"], candidate["page_number"]) in prior_sources
+                    or (candidate["paper_id"], None) in prior_sources
+                )
+                else 0.0
+            )
+        candidates.sort(key=lambda item: item["relevance"], reverse=True)
+    sources = [
+        candidate
+        for candidate in candidates
+        if candidate.get("relevance", 0) > 0
+    ][:6]
     source_context = [
         {key: source[key] for key in ("paper_id", "paper_title", "page_number", "excerpt")}
         for source in sources

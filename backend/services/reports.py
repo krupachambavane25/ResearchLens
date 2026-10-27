@@ -63,8 +63,10 @@ def create_report(analysis) -> bytes:
     for heading, key in (
         ("Comparison", "comparison"),
         ("Potential research gaps and evidence", "research_gaps"),
+        ("Repeated limitations", "repeated_limitations"),
         ("Suggested research questions", "research_questions"),
         ("Future directions", "future_directions"),
+        ("Limitations", "limitations"),
     ):
         items = result.get(key, [])
         if not items:
@@ -78,7 +80,24 @@ def create_report(analysis) -> bytes:
                         for finding in item["findings"]
                     )
                 else:
-                    text = item.get("title", "") + ": " + item.get("description", "")
+                    title = next(
+                        (
+                            item[field]
+                            for field in ("title", "name", "question", "finding", "direction", "limitation", "recommendation", "gap")
+                            if isinstance(item.get(field), str) and item[field].strip()
+                        ),
+                        "Finding",
+                    )
+                    description = next(
+                        (
+                            item[field]
+                            for field in ("description", "rationale", "details", "explanation", "summary", "text", "finding", "direction", "limitation", "recommendation")
+                            if field != "question" and item.get(field) != title
+                            and isinstance(item.get(field), str) and item[field].strip()
+                        ),
+                        "",
+                    )
+                    text = f"{title}: {description}" if description else title
                 for evidence in item.get("evidence", []):
                     page_number = evidence.get("page_number")
                     page_reference = f" · p. {page_number}" if isinstance(page_number, int) else ""
@@ -86,8 +105,6 @@ def create_report(analysis) -> bytes:
                         f" Evidence ({evidence.get('paper_title', 'source')}{page_reference}): "
                         f"“{evidence.get('excerpt', '')}”"
                     )
-                if item.get("question"):
-                    text = item["question"]
             else:
                 text = str(item)
             story.append(Paragraph(escape(text), styles["BodyText"]))

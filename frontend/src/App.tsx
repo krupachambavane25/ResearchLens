@@ -494,10 +494,20 @@ function ReportsPage({ analyses, onDownloadReport }: { analyses: Analysis[]; onD
 
 function downloadAnalysisHtml(analysis: Analysis) {
   const escape = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] || character)
+  const structuredSection = (heading: string, items: any[] = []) => items.length
+    ? `<h2>${escape(heading)}</h2>${items.map((item) => {
+      const { title, description } = structuredItemFields(item)
+      return `<section><h3>${escape(title)}</h3>${description ? `<p>${escape(description)}</p>` : ''}${(item?.evidence || []).map((source: any) => `<blockquote>${escape(source.excerpt)}<br><small>${escape(source.paper_title)}${source.page_number ? ` · p. ${escape(source.page_number)}` : ''}</small></blockquote>`).join('')}</section>`
+    }).join('')}`
+    : ''
   const paragraphs = [
     `<h2>Executive summary</h2><p>${escape(analysis.result.executive_summary || 'Not available')}</p>`,
     `<h2>Paper comparison</h2>${(analysis.result.comparison || []).map((row: any) => `<section><h3>${escape(row.criterion || 'Finding')}</h3><ul>${(row.findings || []).map((finding: any) => `<li><b>${escape(finding.paper_title)}</b>: ${escape(finding.finding)}</li>`).join('')}</ul></section>`).join('')}`,
     `<h2>Potential research gaps</h2>${(analysis.result.research_gaps || []).map((gap: any) => `<section><h3>${escape(gap.title)}</h3><p>${escape(gap.description)}</p>${(gap.evidence || []).map((source: any) => `<blockquote>${escape(source.excerpt)}<br><small>${escape(source.paper_title)}${source.page_number ? ` · p. ${escape(source.page_number)}` : ''}</small></blockquote>`).join('')}</section>`).join('')}`,
+    structuredSection('Repeated limitations', analysis.result.repeated_limitations),
+    structuredSection('Research questions', analysis.result.research_questions),
+    structuredSection('Future directions', analysis.result.future_directions),
+    structuredSection('Limitations', analysis.result.limitations),
   ].join('\n')
   const html = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escape(analysis.prompt)} · ResearchLens</title><style>body{max-width:900px;margin:40px auto;padding:0 20px;font:16px/1.6 system-ui;color:#202534}h1,h2{color:#5549c7}section,blockquote{padding:12px;border-left:3px solid #dedaf8;background:#faf9ff}small{color:#6c7080}</style><h1>ResearchLens analysis report</h1><p>${escape(analysis.prompt)}</p><p>Generated ${escape(new Date(analysis.created_at).toLocaleString())}</p>${paragraphs}</html>`
   downloadBlob(html, `researchlens-${analysis.id.slice(0, 8)}.html`, 'text/html;charset=utf-8')
@@ -845,7 +855,23 @@ function GapDiscovery({ gaps, demoMode }: { gaps: any[]; demoMode: boolean }) {
 }
 
 function StructuredItem({ item }: { item: any }) {
-  return <div className="structured-item"><b>{typeof item === 'string' ? item : item.title || item.name || item.question || 'Finding'}</b>{item.description && <p>{item.description}</p>}{item.evidence?.map((evidence: any, index: number) => <blockquote key={index}><p>“{evidence.excerpt}”</p><cite>{evidence.paper_title}{evidence.page_number ? ` · p. ${evidence.page_number}` : ''}</cite></blockquote>)}</div>
+  const { title, description } = structuredItemFields(item)
+  return <div className="structured-item"><b>{title}</b>{description && <p>{description}</p>}{item?.evidence?.map((evidence: any, index: number) => <blockquote key={index}><p>“{evidence.excerpt}”</p><cite>{evidence.paper_title}{evidence.page_number ? ` · p. ${evidence.page_number}` : ''}</cite></blockquote>)}</div>
+}
+
+function structuredItemFields(item: any): { title: string; description: string } {
+  if (typeof item === 'string') return { title: item, description: '' }
+  const titleFields = ['title', 'name', 'question', 'finding', 'direction', 'limitation', 'recommendation', 'gap']
+  const descriptionFields = ['description', 'rationale', 'details', 'explanation', 'summary', 'text', 'finding', 'direction', 'limitation', 'recommendation']
+  const firstText = (fields: string[]) => fields.find((field) => typeof item?.[field] === 'string' && item[field].trim())
+  const titleField = firstText(titleFields)
+  const descriptionField = descriptionFields.find((field) =>
+    field !== titleField && typeof item?.[field] === 'string' && item[field].trim(),
+  )
+  return {
+    title: titleField ? item[titleField] : 'Finding',
+    description: descriptionField ? item[descriptionField] : '',
+  }
 }
 
 function ComparisonMatrix({ comparison, papers }: { comparison: any[]; papers: any[] }) {

@@ -7,8 +7,7 @@ from collections.abc import Callable
 from typing import TypeVar
 
 import httpx
-from google import genai
-from google.genai import errors, types
+from groq import APIConnectionError, APIStatusError, APITimeoutError, Groq
 
 from backend.config import get_settings
 from backend.models import Paper, SupportingDocument
@@ -19,35 +18,6 @@ from backend.services.analysis import (
 
 MAX_TOTAL_PAPER_CONTEXT_CHARS = 180_000
 MAX_TEXT_CHUNK_CHARS = 8_000
-MAX_EMBEDDING_CHUNK_CHARS = 4_000
-TEXT_ENTRY = {
-    "type": "OBJECT",
-    "properties": {
-        "title": {"type": "STRING"},
-        "description": {"type": "STRING"},
-    },
-    "required": ["title", "description"],
-}
-QUESTION_ENTRY = {
-    "type": "OBJECT",
-    "properties": {
-        "question": {"type": "STRING"},
-        "rationale": {"type": "STRING"},
-    },
-    "required": ["question", "rationale"],
-}
-RESEARCH_GAP_ENTRY = {
-    "type": "OBJECT",
-    "properties": {
-        "title": {"type": "STRING"},
-        "description": {"type": "STRING"},
-        "confidence": {"type": "NUMBER"},
-        "evidence": {"type": "ARRAY", "items": {"type": "OBJECT"}},
-        "counter_evidence": {"type": "ARRAY", "items": {"type": "STRING"}},
-        "uncertainty": {"type": "STRING"},
-    },
-    "required": ["title", "description", "evidence"],
-}
 ASSISTANT_STOP_WORDS = frozenset(
     {
         "about", "after", "again", "all", "also", "and", "are", "because", "been",
@@ -70,26 +40,24 @@ class ProviderError(RuntimeError):
 
 def _provider_error(code: int) -> ProviderError:
     messages = {
-        400: "Gemini rejected the request. Check the configured model and request settings.",
-        401: "Gemini rejected the API key. Check that GEMINI_API_KEY is valid.",
-        403: "Gemini denied access. Check API key permissions and model availability.",
-        404: "The configured Gemini model was not found. Check GEMINI_MODEL.",
-        429: "Gemini rate limit or quota reached. Check your usage limits and retry later.",
+        400: "Groq rejected the request. Check the configured model and request settings.",
+        401: "Groq rejected the API key. Check that GROQ_API_KEY is valid.",
+        403: "Groq denied access. Check API key permissions and model availability.",
+        404: "The configured Groq model was not found. Check GROQ_MODEL.",
+        429: "Groq rate limit or quota reached. Check your usage limits and retry later.",
     }
     if code in messages:
         return ProviderError(messages[code])
     if 500 <= code < 600:
-        return ProviderError("Gemini is temporarily unavailable. Please retry later.")
-    return ProviderError(f"Gemini request failed (HTTP {code or 'unknown'}).")
+        return ProviderError("Groq is temporarily unavailable. Please retry later.")
+    return ProviderError(f"Groq request failed (HTTP {code or 'unknown'}).")
 
 
-def _client(api_key: str):
-    return genai.Client(
+def _client(api_key: str) -> Groq:
+    return Groq(
         api_key=api_key,
-        http_options=types.HttpOptions(
-            timeout=45_000,
-            retry_options=types.HttpRetryOptions(attempts=1),
-        ),
+        timeout=45.0,
+        max_retries=0,
     )
 
 
@@ -97,19 +65,19 @@ def _with_retries(operation: Callable[[], T]) -> T:
     for attempt in range(3):
         try:
             return operation()
-        except errors.APIError as exc:
-            code = exc.code if isinstance(exc.code, int) else 0
+        except APIStatusError as exc:
+            code = exc.status_code
             if code == 429 or 500 <= code < 600:
                 if attempt < 2:
                     time.sleep(1.5 * (attempt + 1))
                     continue
             raise _provider_error(code) from exc
-        except (httpx.TimeoutException, httpx.ConnectError, TimeoutError, OSError) as exc:
+        except (APITimeoutError, APIConnectionError, httpx.TimeoutException, httpx.ConnectError, TimeoutError, OSError) as exc:
             if attempt < 2:
                 time.sleep(1.5 * (attempt + 1))
                 continue
-            raise ProviderError("Gemini request timed out or returned an invalid response.") from exc
-    raise ProviderError("Gemini request failed after retries.")
+            raise ProviderError("Groq request timed out or returned an invalid response.") from exc
+    raise ProviderError("Groq request failed after retries.")
 
 
 def _paper_context(papers: list[Paper]) -> str:
@@ -168,7 +136,7 @@ def analyze(
 ) -> dict:
     settings = get_settings()
     if not settings.live_ai_enabled:
-        raise ProviderError("Gemini API key is not configured.")
+        raise ProviderError("Groq API key is not configured.")
     user_request = {
         "user_instructions": prompt,
         "analysis_mode": mode,
@@ -178,63 +146,37 @@ def analyze(
         "papers": _paper_context(papers),
         "optional_supporting_documents": _document_context(supporting_documents or []),
     }
-    client = _client(settings.gemini_api_key)
+    client = _client(settings.groq_api_key)
     try:
         response = _with_retries(
-            lambda: client.models.generate_content(
-                model=settings.gemini_model,
-                contents=json.dumps(user_request),
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_INSTRUCTIONS,
-                    response_mime_type="application/json",
-                    response_schema={
-                        "type": "OBJECT",
-                        "properties": {
-                            "executive_summary": {"type": "STRING"},
-                            "paper_summaries": {"type": "ARRAY", "items": {"type": "OBJECT"}},
-                            "comparison": {"type": "ARRAY", "items": {"type": "OBJECT"}},
-                            "similarities": {"type": "ARRAY", "items": {"type": "OBJECT"}},
-                            "repeated_limitations": {"type": "ARRAY", "items": TEXT_ENTRY},
-                            "research_gaps": {"type": "ARRAY", "items": RESEARCH_GAP_ENTRY},
-                            "research_questions": {"type": "ARRAY", "items": QUESTION_ENTRY},
-                            "future_directions": {"type": "ARRAY", "items": TEXT_ENTRY},
-                            "limitations": {"type": "ARRAY", "items": TEXT_ENTRY},
-                            "confidence": {"type": "NUMBER"},
-                        },
-                        "required": [
-                            "executive_summary",
-                            "paper_summaries",
-                            "comparison",
-                            "similarities",
-                            "repeated_limitations",
-                            "research_gaps",
-                            "research_questions",
-                            "future_directions",
-                            "limitations",
-                            "confidence",
-                        ],
-                    },
-                    temperature=0.2,
-                ),
+            lambda: client.chat.completions.create(
+                model=settings.groq_model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_INSTRUCTIONS},
+                    {"role": "user", "content": json.dumps(user_request)},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.2,
             )
         )
-        if not response.text:
-            raise ValueError("Gemini returned an empty analysis.")
-        data = json.loads(response.text)
-    except (TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise ProviderError("Gemini returned an unreadable analysis. Please retry.") from exc
+        content = response.choices[0].message.content
+        if not content:
+            raise ValueError("Groq returned an empty analysis.")
+        data = json.loads(content)
+    except (AttributeError, IndexError, TypeError, ValueError) as exc:
+        raise ProviderError("Groq returned an unreadable analysis. Please retry.") from exc
     finally:
         client.close()
     try:
         return validate_ai_result(data, papers)
     except ValueError as exc:
-        raise ProviderError("Gemini returned analysis that did not match the required evidence schema.") from exc
+        raise ProviderError("Groq returned analysis that did not match the required evidence schema.") from exc
 
 
 def answer_question(question: str, papers: list[Paper], history: list[dict]) -> tuple[str, list[dict]]:
     settings = get_settings()
     if not settings.live_ai_enabled:
-        raise ProviderError("The research assistant requires a configured Gemini API key.")
+        raise ProviderError("The research assistant requires a configured Groq API key.")
 
     def content_terms(text: str) -> list[str]:
         return [
@@ -339,70 +281,36 @@ def answer_question(question: str, papers: list[Paper], history: list[dict]) -> 
         "If the excerpts do not support an answer, say the selected papers do not provide "
         "enough evidence. Do not invent facts, page numbers, citations, or external references."
     )
-    client = _client(settings.gemini_api_key)
-    try:
-        response = _with_retries(
-            lambda: client.models.generate_content(
-                model=settings.gemini_model,
-                contents=json.dumps(
-                    {
-                        "question": question,
-                        "conversation_history": safe_history,
-                        "retrieved_sources": [
-                            {"source_id": f"S{index}", **source}
-                            for index, source in enumerate(source_context, start=1)
-                        ],
-                    }
-                ),
-                config=types.GenerateContentConfig(
-                    system_instruction=instructions,
-                    temperature=0.2,
-                ),
-            )
-        )
-        if not response.text or not response.text.strip():
-            raise ProviderError("Gemini returned an empty assistant response. Please retry.")
-        return response.text.strip(), source_context
-    except (TypeError, ValueError) as exc:
-        raise ProviderError("Gemini returned an unreadable assistant response. Please retry.") from exc
-    finally:
-        client.close()
-
-
-def embed(text: str) -> list[float]:
-    settings = get_settings()
-    if not settings.live_ai_enabled:
-        raise ProviderError("Gemini API key is not configured.")
-    starts = sorted(
+    messages = [{"role": "system", "content": instructions}]
+    messages.extend(safe_history)
+    messages.append(
         {
-            0,
-            max(0, (len(text) - MAX_EMBEDDING_CHUNK_CHARS) // 2),
-            max(0, len(text) - MAX_EMBEDDING_CHUNK_CHARS),
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "question": question,
+                    "retrieved_sources": [
+                        {"source_id": f"S{index}", **source}
+                        for index, source in enumerate(source_context, start=1)
+                    ],
+                }
+            ),
         }
     )
-    chunks = [text[start : start + MAX_EMBEDDING_CHUNK_CHARS] for start in starts]
-    client = _client(settings.gemini_api_key)
+    client = _client(settings.groq_api_key)
     try:
         response = _with_retries(
-            lambda: client.models.embed_content(
-                model=settings.gemini_embedding_model,
-                contents=chunks,
-                config=types.EmbedContentConfig(task_type="SEMANTIC_SIMILARITY"),
+            lambda: client.chat.completions.create(
+                model=settings.groq_model,
+                messages=messages,
+                temperature=0.2,
             )
         )
-        vectors = [entry.values for entry in response.embeddings or []]
-        if (
-            len(vectors) != len(chunks)
-            or not vectors
-            or any(vector is None for vector in vectors)
-            or any(len(vector) != len(vectors[0]) for vector in vectors)
-        ):
-            raise ValueError("Embedding vectors have inconsistent sizes.")
-        return [
-            sum(float(vector[index]) for vector in vectors) / len(vectors)
-            for index in range(len(vectors[0]))
-        ]
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ProviderError("Gemini returned an invalid embedding.") from exc
+        content = response.choices[0].message.content
+        if not content or not content.strip():
+            raise ProviderError("Groq returned an empty assistant response. Please retry.")
+        return content.strip(), source_context
+    except (AttributeError, IndexError, TypeError, ValueError) as exc:
+        raise ProviderError("Groq returned an unreadable assistant response. Please retry.") from exc
     finally:
         client.close()

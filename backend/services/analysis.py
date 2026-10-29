@@ -152,7 +152,7 @@ def build_local_analysis(
                 "paper_id": paper.id,
                 "title": paper.title,
                 "summary": (
-                    "Local extraction preview only; configure Gemini for AI-generated analysis. "
+                    "Local extraction preview only; configure Groq for AI-generated analysis. "
                     f"Extracted {paper.word_count:,} words from {paper.page_count} pages."
                 ),
                 "objectives": _snippet(paper, "objectives", "Not found in document"),
@@ -199,10 +199,10 @@ def build_local_analysis(
     result = {
         "demo_mode": True,
         "notice": (
-            "Live Gemini analysis is unavailable. These are extracted text previews and "
+            "Live AI analysis is unavailable. These are extracted text previews and "
             "lexical overlap indicators, not AI findings, semantic embeddings, or research gaps."
         ),
-        "executive_summary": "Local PDF extraction completed. Configure an API key to run evidence-grounded AI analysis.",
+        "executive_summary": "Local PDF extraction completed. Configure a Groq API key to run evidence-grounded AI analysis.",
         "paper_summaries": summaries,
         "comparison": comparison,
         "similarities": [

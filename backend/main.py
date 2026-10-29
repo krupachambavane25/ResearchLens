@@ -30,14 +30,14 @@ from backend.schemas import (
     ProjectRequest,
 )
 from backend.services.analysis import (
+    MAX_CONTEXT_CHARS,
     build_local_analysis,
-    cosine_similarity,
+    lexical_similarity,
 )
-from backend.services.gemini import (
+from backend.services.groq import (
     ProviderError,
     analyze as live_analyze,
     answer_question,
-    embed,
 )
 from backend.services.pdf import (
     PDFValidationError,
@@ -134,7 +134,7 @@ def _conversation_data(conversation: AssistantConversation) -> dict:
 @app.get("/api/health", response_model=HealthResponse)
 def health():
     live = get_settings().live_ai_enabled
-    return {"status": "ok", "live_ai_enabled": live, "provider": "gemini" if live else "local demo"}
+    return {"status": "ok", "live_ai_enabled": live, "provider": "groq" if live else "local demo"}
 
 
 @app.get("/api/ready")
@@ -587,26 +587,25 @@ def create_analysis(
                 request.report_format,
                 documents,
             )
-            vectors = [
-                embed(f"{paper.title}\n{paper.extracted_text}")
-                for paper in papers
-            ]
         except ProviderError as exc:
             logger.warning("AI analysis could not be completed: %s", exc)
             raise HTTPException(status_code=502, detail=str(exc)) from exc
-        provider = "gemini"
+        provider = "groq"
         comparisons = []
         for index, first in enumerate(papers):
             for other_index in range(index + 1, len(papers)):
                 second = papers[other_index]
-                score = cosine_similarity(vectors[index], vectors[other_index])
+                score = lexical_similarity(
+                    first.extracted_text[:MAX_CONTEXT_CHARS],
+                    second.extracted_text[:MAX_CONTEXT_CHARS],
+                )
                 comparisons.append(
                     {
                         "paper_ids": [first.id, second.id],
                         "paper_titles": [first.title, second.title],
                         "score": round(score, 4),
-                        "method": get_settings().gemini_embedding_model,
-                        "explanation": "Cosine similarity between provider-generated paper embeddings.",
+                        "method": "lexical-overlap",
+                        "explanation": "Cosine similarity between paper word-frequency vectors; this is lexical, not semantic similarity.",
                     }
                 )
         result["similarities"] = comparisons

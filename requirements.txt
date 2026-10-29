@@ -9,5 +9,5 @@ pytest>=8.0
 httpx2>=2,<3
 google-auth[requests]>=2.38,<3
 psycopg[binary]>=3.2,<4
-google-genai>=1.0,<2
+groq>=0.26,<1
 httpx>=0.28.1,<1

@@ -4,9 +4,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    gemini_api_key: str = ""
-    gemini_model: str = "gemini-3.8-flash"
-    gemini_embedding_model: str = "gemini-embedding-001"
+    groq_api_key: str = ""
+    groq_model: str = "openai/gpt-oss-20b"
     google_client_id: str = ""
     allowed_google_emails: str = ""
     auth_required: bool = False
@@ -23,7 +22,7 @@ class Settings(BaseSettings):
 
     @property
     def live_ai_enabled(self) -> bool:
-        return bool(self.gemini_api_key.strip())
+        return bool(self.groq_api_key.strip())
 
 
 @lru_cache

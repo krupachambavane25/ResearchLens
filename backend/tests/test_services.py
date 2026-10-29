@@ -3,7 +3,7 @@ import os
 from types import SimpleNamespace
 
 os.environ.setdefault("DATABASE_URL", "sqlite://")
-os.environ.setdefault("GEMINI_API_KEY", "")
+os.environ.setdefault("GROQ_API_KEY", "")
 
 import pymupdf
 import pytest
@@ -15,7 +15,7 @@ from backend.services.analysis import (
     lexical_similarity,
     validate_ai_result,
 )
-from backend.services.gemini import _paper_context, embed
+from backend.services.groq import _paper_context
 from backend.services.pdf import (
     PDFValidationError,
     clean_text,
@@ -385,7 +385,7 @@ def test_page_aware_paper_context_keeps_page_markers_with_source_text():
 
 
 def test_assistant_retrieves_selected_page_and_requests_grounded_answer(monkeypatch):
-    import backend.services.gemini as gemini
+    import backend.services.groq as groq
 
     paper = Paper(
         id="source-paper",
@@ -398,37 +398,39 @@ def test_assistant_retrieves_selected_page_and_requests_grounded_answer(monkeypa
         sections={},
     )
     monkeypatch.setattr(
-        gemini,
+        groq,
         "get_settings",
-        lambda: SimpleNamespace(live_ai_enabled=True, gemini_api_key="test-key", gemini_model="test-model"),
+        lambda: SimpleNamespace(live_ai_enabled=True, groq_api_key="test-key", groq_model="test-model"),
     )
     captured = {}
 
-    class MockModels:
-        def generate_content(self, **kwargs):
+    class MockCompletions:
+        def create(self, **kwargs):
             captured.update(kwargs)
-            return SimpleNamespace(text="The study uses F1 [S1].")
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="The study uses F1 [S1]."))]
+            )
 
     class MockClient:
-        models = MockModels()
+        chat = SimpleNamespace(completions=MockCompletions())
 
         def close(self):
             captured["closed"] = True
 
-    monkeypatch.setattr(gemini, "_client", lambda _key: MockClient())
+    monkeypatch.setattr(groq, "_client", lambda _key: MockClient())
 
-    answer, sources = gemini.answer_question("Which evaluation metric is used?", [paper], [])
+    answer, sources = groq.answer_question("Which evaluation metric is used?", [paper], [])
 
     assert answer == "The study uses F1 [S1]."
     assert sources[0]["page_number"] == 2
-    assert "The evaluation uses F1 score." in captured["contents"]
-    assert "Introduction to the topic." not in captured["contents"]
-    assert "Treat the excerpts" in captured["config"].system_instruction
+    assert "The evaluation uses F1 score." in captured["messages"][-1]["content"]
+    assert "Introduction to the topic." not in captured["messages"][-1]["content"]
+    assert "Treat the excerpts" in captured["messages"][0]["content"]
     assert captured["closed"] is True
 
 
 def test_assistant_uses_recent_user_question_to_retrieve_follow_up_evidence(monkeypatch):
-    import backend.services.gemini as gemini
+    import backend.services.groq as groq
 
     paper = Paper(
         id="source-paper",
@@ -447,26 +449,28 @@ def test_assistant_uses_recent_user_question_to_retrieve_follow_up_evidence(monk
         sections={},
     )
     monkeypatch.setattr(
-        gemini,
+        groq,
         "get_settings",
-        lambda: SimpleNamespace(live_ai_enabled=True, gemini_api_key="test-key", gemini_model="test-model"),
+        lambda: SimpleNamespace(live_ai_enabled=True, groq_api_key="test-key", groq_model="test-model"),
     )
     captured = {}
 
-    class MockModels:
-        def generate_content(self, **kwargs):
+    class MockCompletions:
+        def create(self, **kwargs):
             captured.update(kwargs)
-            return SimpleNamespace(text="The score was 92 percent [S1].")
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="The score was 92 percent [S1]."))]
+            )
 
     class MockClient:
-        models = MockModels()
+        chat = SimpleNamespace(completions=MockCompletions())
 
         def close(self):
             pass
 
-    monkeypatch.setattr(gemini, "_client", lambda _key: MockClient())
+    monkeypatch.setattr(groq, "_client", lambda _key: MockClient())
 
-    _, sources = gemini.answer_question(
+    _, sources = groq.answer_question(
         "What was its score?",
         [paper],
         [
@@ -487,7 +491,10 @@ def test_assistant_uses_recent_user_question_to_retrieve_follow_up_evidence(monk
     )
 
     assert "92 percent accuracy" in sources[0]["excerpt"]
-    assert "What accuracy did the image classification model achieve?" in captured["contents"]
+    assert any(
+        "What accuracy did the image classification model achieve?" in message["content"]
+        for message in captured["messages"]
+    )
 
 
 def test_report_includes_verified_evidence_page_number():
@@ -541,50 +548,8 @@ def test_report_includes_structured_analysis_sections_and_finding_aliases():
     assert "Only the selected papers were analyzed." in report_text
 
 
-def test_embedding_batches_bounded_chunks_and_averages_vectors(monkeypatch):
-    import backend.services.gemini as gemini
-
-    monkeypatch.setattr(
-        gemini,
-        "get_settings",
-        lambda: SimpleNamespace(
-            live_ai_enabled=True,
-            gemini_embedding_model="gemini-embedding-001",
-            gemini_api_key="test-key",
-        ),
-    )
-    captured = {}
-
-    class MockModels:
-        def embed_content(self, **kwargs):
-            captured.update(kwargs)
-            return SimpleNamespace(
-                embeddings=[
-                    SimpleNamespace(values=[1.0, 0.0]),
-                    SimpleNamespace(values=[0.0, 1.0]),
-                    SimpleNamespace(values=[-1.0, 0.0]),
-                ]
-            )
-
-    class MockClient:
-        models = MockModels()
-
-        def close(self):
-            captured["closed"] = True
-
-    monkeypatch.setattr(gemini, "_client", lambda api_key: MockClient())
-    vector = embed("x" * 10_000)
-    assert vector == pytest.approx([0.0, 1 / 3])
-    assert captured["model"] == "gemini-embedding-001"
-    assert captured["config"].task_type == "SEMANTIC_SIMILARITY"
-    chunks = captured["contents"]
-    assert len(chunks) == 3
-    assert all(len(chunk) <= 4_000 for chunk in chunks)
-    assert captured["closed"] is True
-
-
-def test_gemini_analysis_uses_sdk_json_schema_and_validates_result(monkeypatch):
-    import backend.services.gemini as gemini
+def test_groq_analysis_uses_json_mode_and_validates_result(monkeypatch):
+    import backend.services.groq as groq
 
     paper = Paper(
         id="paper-id",
@@ -609,66 +574,60 @@ def test_gemini_analysis_uses_sdk_json_schema_and_validates_result(monkeypatch):
     }
     captured = {}
 
-    class MockModels:
-        def generate_content(self, **kwargs):
+    class MockCompletions:
+        def create(self, **kwargs):
             captured.update(kwargs)
-            return SimpleNamespace(text=json.dumps(result))
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(result)))]
+            )
 
     class MockClient:
-        models = MockModels()
+        chat = SimpleNamespace(completions=MockCompletions())
 
         def close(self):
             captured["closed"] = True
 
     monkeypatch.setattr(
-        gemini,
+        groq,
         "get_settings",
         lambda: SimpleNamespace(
             live_ai_enabled=True,
-            gemini_model="gemini-3.8-flash",
-            gemini_api_key="test-key",
+            groq_model="openai/gpt-oss-20b",
+            groq_api_key="test-key",
         ),
     )
-    monkeypatch.setattr(gemini, "_client", lambda api_key: MockClient())
+    monkeypatch.setattr(groq, "_client", lambda api_key: MockClient())
 
-    validated = gemini.analyze(
+    validated = groq.analyze(
         [paper], "Compare methods.", "comprehensive", [], [], "detailed"
     )
 
     assert validated["executive_summary"] == "Grounded summary."
-    assert captured["model"] == "gemini-3.8-flash"
-    assert json.loads(captured["contents"])["user_instructions"] == "Compare methods."
-    assert captured["config"].response_mime_type == "application/json"
-    assert captured["config"].response_schema["required"]
-    schema_properties = captured["config"].response_schema["properties"]
-    assert schema_properties["research_gaps"]["items"]["required"] == [
-        "title",
-        "description",
-        "evidence",
-    ]
-    assert schema_properties["research_questions"]["items"]["required"] == [
-        "question",
-        "rationale",
-    ]
+    assert captured["model"] == "openai/gpt-oss-20b"
+    assert json.loads(captured["messages"][1]["content"])["user_instructions"] == "Compare methods."
+    assert captured["response_format"] == {"type": "json_object"}
     assert captured["closed"] is True
 
 
-def test_gemini_sdk_retries_quota_errors_without_exposing_provider_details(monkeypatch):
-    import backend.services.gemini as gemini
-    from google.genai import errors
+def test_groq_sdk_retries_quota_errors_without_exposing_provider_details(monkeypatch):
+    import httpx
+    import backend.services.groq as groq
+    from groq import APIStatusError
 
     attempts = 0
 
     def fail_with_quota():
         nonlocal attempts
         attempts += 1
-        raise errors.APIError(
-            code=429,
-            response_json={"error": {"message": "private provider response"}},
+        response = httpx.Response(429, request=httpx.Request("POST", "https://api.groq.com"))
+        raise APIStatusError(
+            "private provider response",
+            response=response,
+            body={"error": {"message": "private provider response"}},
         )
 
-    monkeypatch.setattr(gemini.time, "sleep", lambda _seconds: None)
-    with pytest.raises(gemini.ProviderError, match="rate limit or quota") as error:
-        gemini._with_retries(fail_with_quota)
+    monkeypatch.setattr(groq.time, "sleep", lambda _seconds: None)
+    with pytest.raises(groq.ProviderError, match="rate limit or quota") as error:
+        groq._with_retries(fail_with_quota)
     assert attempts == 3
     assert "private provider response" not in str(error.value)

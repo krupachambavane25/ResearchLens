@@ -2,7 +2,7 @@ import os
 from types import SimpleNamespace
 
 os.environ.setdefault("DATABASE_URL", "sqlite://")
-os.environ.setdefault("GEMINI_API_KEY", "")
+os.environ.setdefault("GROQ_API_KEY", "")
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 import backend.main as main_module
 from backend.database import Base, get_db
-from backend.services.gemini import ProviderError
+from backend.services.groq import ProviderError
 from backend.tests.test_services import make_pdf
 
 
@@ -266,7 +266,7 @@ def test_provider_errors_are_reported_without_fallback(client, monkeypatch):
     )
 
     def fail_provider(*args, **kwargs):
-        raise ProviderError("Gemini rate limit or quota reached. Check your usage limits and retry later.")
+        raise ProviderError("Groq rate limit or quota reached. Check your usage limits and retry later.")
 
     monkeypatch.setattr(main_module, "live_analyze", fail_provider)
     response = client.post(
@@ -274,17 +274,17 @@ def test_provider_errors_are_reported_without_fallback(client, monkeypatch):
         json={"prompt": "Compare these works.", "paper_ids": [paper_id]},
     )
     assert response.status_code == 502
-    assert response.json()["detail"] == "Gemini rate limit or quota reached. Check your usage limits and retry later."
+    assert response.json()["detail"] == "Groq rate limit or quota reached. Check your usage limits and retry later."
     assert client.get("/api/analyses").json()["analyses"] == []
 
 
-def test_live_analysis_uses_embedding_cosine_and_stores_pairwise_similarity(client, monkeypatch):
+def test_live_analysis_uses_lexical_similarity_and_stores_pairwise_similarity(client, monkeypatch):
     monkeypatch.setattr(
         main_module,
         "get_settings",
         lambda: SimpleNamespace(
             live_ai_enabled=True,
-            gemini_embedding_model="gemini-embedding-001",
+            groq_model="openai/gpt-oss-20b",
         ),
     )
     paper_ids = [add_paper(client), add_paper(client)]
@@ -298,8 +298,6 @@ def test_live_analysis_uses_embedding_cosine_and_stores_pairwise_similarity(clie
             "similarities": [],
         },
     )
-    vectors = iter(([1.0, 0.0], [1.0, 1.0]))
-    monkeypatch.setattr(main_module, "embed", lambda text: next(vectors))
     response = client.post(
         "/api/analyses",
         json={"prompt": "Compare these works.", "paper_ids": paper_ids},
@@ -307,8 +305,8 @@ def test_live_analysis_uses_embedding_cosine_and_stores_pairwise_similarity(clie
     assert response.status_code == 200, response.text
     similarities = response.json()["result"]["similarities"]
     assert similarities[0]["paper_ids"] == paper_ids
-    assert similarities[0]["score"] == pytest.approx(0.7071, abs=0.0001)
-    assert similarities[0]["method"] == "gemini-embedding-001"
+    assert similarities[0]["score"] == pytest.approx(1.0)
+    assert similarities[0]["method"] == "lexical-overlap"
 
 
 def test_google_auth_is_required_and_data_is_owner_scoped(client, monkeypatch):

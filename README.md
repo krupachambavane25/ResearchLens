@@ -1,6 +1,6 @@
 # ResearchLens
 
-ResearchLens is a research-paper analysis app that runs locally or as a cloud service. It extracts text from uploaded PDFs, lets you define custom analysis prompts, compares selected papers, and (when configured) uses Gemini for evidence-grounded summaries and candidate research-gap discovery.
+ResearchLens is a research-paper analysis app that runs locally or as a cloud service. It extracts text from uploaded PDFs, lets you define custom analysis prompts, compares selected papers, and (when configured) uses Groq for evidence-grounded summaries and candidate research-gap discovery.
 
 
 ## What is implemented
@@ -10,39 +10,39 @@ ResearchLens is a research-paper analysis app that runs locally or as a cloud se
 - Multi-PDF upload, validation, text extraction, basic section detection, searchable paper library, and deletion.
 - Individual paper detail view with detected sections and extracted text preview.
 - Custom prompt, selected papers, optional PDF/TXT/Markdown/CSV supporting files, custom criteria, domain questions, analysis mode, and report format.
-- Official Google Gen AI Python SDK integration for structured Gemini analysis and semantic embeddings. Evidence excerpts are checked against source text before gaps are kept.
+- Groq Python SDK integration for JSON-formatted analysis and paper-grounded assistant answers. Evidence excerpts are checked against source text before gaps are kept.
 - Local demo mode when no API key is configured. It extracts actual uploaded text and reports lexical overlap only; it does not invent AI summaries or research gaps.
 - Saved analysis history, similarity heatmap, comparison CSV export, and downloadable PDF reports.
 - Dedicated analytics, multi-paper comparison, project workspace, reports, and settings pages.
 - A dedicated Research Gaps page that filters saved evidence-linked candidates, surfaces confidence and supporting passages, and summarizes research directions across analyses.
 - Prompt starters for comprehensive literature reviews, method/result comparisons, and evidence-based gap discovery; each page has a distinct visual theme.
-- A paper-grounded Research Assistant with retrieved page excerpts, source citations, and persistent per-account conversations (requires the configured Gemini service).
+- A paper-grounded Research Assistant with retrieved page excerpts, source citations, and persistent per-account conversations (requires the configured Groq service).
 - Project membership for papers and saved analyses, with owner-scoped project APIs.
 - Optional Google sign-in with server-side email allowlisting and per-account data isolation.
 - Tests for PDF handling, preprocessing, similarity, evidence validation, API validation, provider errors, persistence, supporting documents, and reports.
 
 ## Windows setup
 
-Requirements: Python 3.10+ (Python 3.12 is recommended for a clean Windows setup) and Node.js 20+.
+Requirements: Python 3.10+ (Python 3.11 or 3.12 recommended) and Node.js 20+.
 
 In PowerShell, from the project root:
 
 ```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
+py -3.11 -m venv .venv311
+.\.venv311\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-For live AI, edit `.env` and add your private Google Gemini API key:
+For live AI, create a Groq API key and add it to `.env`:
 
 ```dotenv
-GEMINI_API_KEY=your_key_here
+GROQ_API_KEY=your_key_here
 ```
 
 The key is used only by the backend. Do not commit `.env`. You can start the app without a key; local extraction and lexical overlap remain available.
-If a real Gemini key was ever committed or shared, revoke it in Google AI Studio immediately, create a replacement, and update only the backend environment.
+Keep the key private. If it is ever exposed, revoke it in the Groq console and update only the backend environment.
 
 For local Google sign-in, set `GOOGLE_CLIENT_ID` and `ALLOWED_GOOGLE_EMAILS` in the root `.env`, set `VITE_GOOGLE_CLIENT_ID` in `frontend/.env.local`, and set the Google OAuth authorized JavaScript origin to `http://localhost:5173`. The frontend's development API URL defaults to localhost and does not need an environment variable.
 
@@ -51,7 +51,7 @@ Open **two PowerShell terminals**, both at the project root.
 Terminal 1 — backend:
 
 ```powershell
-.\.venv\Scripts\Activate.ps1
+.\.venv311\Scripts\Activate.ps1
 python -m backend
 ```
 
@@ -66,13 +66,13 @@ npm run dev
 Open [http://localhost:5173](http://localhost:5173). FastAPI interactive documentation is at [http://localhost:8000/docs](http://localhost:8000/docs), and the health endpoint is [http://localhost:8000/api/health](http://localhost:8000/api/health).
 
 If PowerShell blocks virtual environment activation, run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` in that terminal and activate again.
-If an existing environment fails while importing Pydantic or `pydantic_core`, stop the server and create a clean Python 3.12 virtual environment rather than reusing the broken environment.
+If an existing environment fails while importing Pydantic or `pydantic_core`, stop the server and create a clean Python 3.11 or 3.12 virtual environment rather than reusing the broken environment.
 
 ## Free cloud deployment (Vercel + Render + Supabase)
 
 Deploy the React/Vite frontend on Vercel and the FastAPI backend on Render. The root [render.yaml](render.yaml) defines only the API service. Use Supabase Postgres for persistent cloud metadata, extracted paper text, and analysis history. Render's free service filesystem is temporary, so the app does not retain uploaded PDF binaries: it extracts text during upload, saves that text and metadata in Postgres, then discards the original file. Re-upload a PDF if it needs to be extracted again.
 
-This free-tier setup is for evaluation, not a production availability or confidentiality guarantee. Render may sleep an idle service; Supabase free projects have resource limits and may pause after inactivity; Gemini has separate quotas and may have charges. Check current provider terms and pricing, keep backups, and don't upload material you aren't permitted to process with third-party services.
+This free-tier setup is for evaluation, not a production availability or confidentiality guarantee. Render may sleep an idle service; Supabase free projects have resource limits and may pause after inactivity; Groq has account-specific rate limits and terms that can change. Check current provider terms and pricing, keep backups, and don't upload material you aren't permitted to process with third-party services.
 
 ### 1. Push the project to GitHub
 
@@ -101,7 +101,7 @@ Set these values in the API's Render environment:
 | `GOOGLE_CLIENT_ID` | Google OAuth Web client ID |
 | `ALLOWED_GOOGLE_EMAILS` | Comma-separated approved account email addresses |
 | `FRONTEND_ORIGIN` | Exact Vercel production origin, e.g. `https://your-project.vercel.app` |
-| `GEMINI_API_KEY` | Replacement Gemini key (private); may be empty for labeled local mode |
+| `GROQ_API_KEY` | Groq key (private); may be empty for labeled local mode |
 
 Use the API URL actually assigned in Render; this repository does not create a service or assume its URL.
 
@@ -118,20 +118,20 @@ The SPA rewrite in [frontend/vercel.json](frontend/vercel.json) sends client rou
 
 ### 6. Verify and redeploy
 
-Visit `/api/health` and `/api/ready` on the actual Render service. Readiness should return `{"status":"ready","database":"connected"}`. Open the Vercel production site, sign in as an allowlisted account, upload a text-based PDF, run an analysis, and reopen it from history. Live AI testing requires a valid Gemini key and available quota. No deployment or public URL is created by these code changes.
+Visit `/api/health` and `/api/ready` on the actual Render service. Readiness should return `{"status":"ready","database":"connected"}`. Open the Vercel production site, sign in as an allowlisted account, upload a text-based PDF, run an analysis, and reopen it from history. Live AI testing requires a valid Groq key and available quota. No deployment or public URL is created by these code changes.
 
-The Gemini API key and Postgres URI are backend-only secrets. Never use them in `VITE_` variables, commit them, or include them in screenshots. After code changes, push to GitHub; connected Render and Vercel projects can redeploy from the configured branch or be manually deployed from their dashboards.
+The Groq API key and Postgres URI are backend-only secrets. Never use them in `VITE_` variables, commit them, or include them in screenshots. After code changes, push to GitHub; connected Render and Vercel projects can redeploy from the configured branch or be manually deployed from their dashboards.
 
-Provider references: [Google AI Studio](https://aistudio.google.com/), [Gemini API docs](https://ai.google.dev/gemini-api/docs), [Gemini models](https://ai.google.dev/gemini-api/docs/models), [Gemini pricing/free-tier details](https://ai.google.dev/gemini-api/docs/pricing), [Vercel Vite deployment](https://vercel.com/docs/frameworks/frontend/vite), and [Render docs](https://render.com/docs).
+Provider references: [Groq API keys](https://console.groq.com/keys), [Groq models](https://console.groq.com/docs/models), [Groq rate limits](https://console.groq.com/docs/rate-limits), [Vercel Vite deployment](https://vercel.com/docs/frameworks/frontend/vite), and [Render docs](https://render.com/docs).
 
 ## Analysis workflow
 
 1. Add text-based research PDFs in **Upload papers**. PDF files are limited to 25 MB, 300 pages, and 10 files per upload. Scanned image PDFs are rejected because OCR is not included.
 2. Optionally upload supporting PDF, TXT, Markdown, or CSV files within **Custom analysis**.
 3. Select research papers and supporting files, write a prompt, set analysis criteria and questions, select an analysis mode and report format, then review the request.
-4. Run the analysis. Gemini mode produces paper summaries, comparison findings, vector-embedding cosine similarity, potential evidence-linked gaps, and questions. Local mode shows extraction previews and explicitly labeled lexical similarity, with no AI gap claims.
+4. Run the analysis. Groq mode produces paper summaries, comparison findings, lexical similarity, potential evidence-linked gaps, and questions. Local mode shows extraction previews and explicitly labeled lexical similarity, with no AI gap claims.
 5. Inspect saved results in **Analysis history**, open **Analytics** for saved-data charts, expand evidence passages, and export from **Reports** as PDF, HTML, or comparison CSV.
-6. Use **Compare papers** for a dedicated multi-paper workflow, or ask selected-paper questions in **Research assistant**. Chat is unavailable without a backend Gemini key; no fabricated local answers are shown.
+6. Use **Compare papers** for a dedicated multi-paper workflow, or ask selected-paper questions in **Research assistant**. Chat is unavailable without a backend Groq key; no fabricated local answers are shown.
 7. Create **Projects**, assign papers, and choose a project when saving a new analysis. Existing projects and chats are private to the authenticated owner when Google sign-in is enabled.
 
 Research gaps are candidates based only on the selected materials, not claims of worldwide novelty. New uploads retain normalized text per PDF page; cited excerpts are verified against that page and the page number is derived from stored extraction metadata, never trusted from the AI response. Older papers uploaded before page-aware extraction may have verified excerpts without page numbers.
@@ -167,7 +167,7 @@ Existing databases are upgraded at startup with nullable project-link columns. N
 Backend tests:
 
 ```powershell
-.\.venv\Scripts\Activate.ps1
+.\.venv311\Scripts\Activate.ps1
 python -m pytest backend\tests -q
 ```
 
@@ -182,9 +182,8 @@ npm run build
 
 | Variable | Default | Description |
 |---|---|---|
-| `GEMINI_API_KEY` | empty | Server-side Gemini API key; empty enables local mode |
-| `GEMINI_MODEL` | `gemini-3.8-flash` | Gemini structured analysis model; verify account-specific free-tier access |
-| `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-001` | Embedding model for semantic similarity |
+| `GROQ_API_KEY` | empty | Server-side Groq API key; empty enables local mode |
+| `GROQ_MODEL` | `openai/gpt-oss-20b` | Groq chat-completion model; verify it is available to your account |
 | `GOOGLE_CLIENT_ID` | empty | Server-side Google token audience; enables Google sign-in |
 | `ALLOWED_GOOGLE_EMAILS` | empty | Comma-separated email allowlist required when Google sign-in is enabled |
 | `AUTH_REQUIRED` | `false` | Require Google sign-in; set to `true` for cloud deployments |
@@ -201,16 +200,16 @@ Backend variables go in the project-root `.env` locally and in the Render API se
 
 - PDF text is extracted using PyMuPDF, whitespace and line-break hyphenation are normalized, and headings are heuristically mapped to abstract, objectives, methodology, datasets, results, limitations, conclusion, and future work.
 - In local mode, a token-frequency cosine score measures lexical word overlap. It is not semantic similarity.
-- With a Gemini key, the backend uses Google's maintained `google-genai` Python SDK to request schema-constrained JSON analysis and semantic-similarity embeddings. Pairwise vectors are compared using cosine similarity. Transient errors are retried in a bounded manner and reported to the UI rather than replaced with successful-looking mock results.
+- With a Groq key, the backend requests JSON-formatted analyses and grounded assistant responses. Pairwise paper similarity uses lexical word-frequency vectors; Groq embeddings are not used. Transient errors are retried in a bounded manner and reported to the UI rather than replaced with successful-looking mock results.
 - Extracted files and prompt content are treated as untrusted data. A fixed system instruction tells the model to ignore instructions embedded in supplied documents. Evidence quotations from gap candidates must match extracted source text; unverified gaps are removed.
-- Only Gemini is currently implemented. Provider keys and model names remain server-side.
+- Groq is the configured live provider. Provider keys and model names remain server-side.
 
 ## Limitations and troubleshooting
 
 - OCR, DOCX, spreadsheets, external literature search, editable metadata, automatic author/keyword/reference extraction, and background job progress tracking are not included. Google authentication is optional; without it, local mode is intended for a trusted single-user environment only.
 - Very long source text is divided into sequential chunks, with a bounded per-analysis context budget; truncated coverage is explicitly disclosed to the model. This is not a full-document guarantee. Review source coverage for long papers.
 - Page numbers are available for verified evidence excerpts from papers uploaded after page-aware extraction was added; older stored papers retain evidence without page numbers.
-- Assistant retrieval uses local lexical matching over page text before sending only the selected excerpts and short conversation history to Gemini; it is not a vector-indexed or external-literature search system.
+- Assistant retrieval uses local lexical matching over page text before sending only the selected excerpts and short conversation history to Groq; it is not a vector-indexed or external-literature search system.
 - If the UI cannot connect, confirm that the backend is running on port 8000. If CORS errors occur, set `FRONTEND_ORIGIN` to the Vite origin and restart the backend.
-- If Gemini is unavailable, check the key, model availability, network access, API quota, and the backend console. Provider failures are surfaced in the UI.
+- If Groq is unavailable, check the key, model availability, network access, API rate limits, and the backend console. Provider failures are surfaced in the UI.
 - The local SQLite database is created in the backend process's current working directory and ignored by Git. In cloud deployment, use persistent external PostgreSQL and set `AUTH_REQUIRED=true`.

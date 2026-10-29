@@ -230,7 +230,7 @@ function App() {
         <div className="sidebar-bottom">
           <div className={`ai-status ${aiEnabled ? 'ai-ready' : ''}`}>
             <div className="status-dot" />
-            <div><b>{aiEnabled ? 'Gemini connected' : 'Local demo mode'}</b><small>{aiEnabled ? 'Live analysis enabled' : 'API key not configured'}</small></div>
+            <div><b>{aiEnabled ? 'Groq connected' : 'Local demo mode'}</b><small>{aiEnabled ? 'Live analysis enabled' : 'API key not configured'}</small></div>
             <ShieldCheck size={16} />
           </div>
           <NavLink to="/settings" className="nav-item bottom-nav"><Settings size={17} /><span>Settings</span></NavLink>
@@ -301,7 +301,7 @@ function Dashboard({ papers, analyses, aiEnabled }: { papers: Paper[]; analyses:
   return (
     <>
       <PageHeading eyebrow="YOUR RESEARCH WORKSPACE" title="Good research starts with a clearer view." description="Bring your papers together, compare what they say, and explore the questions still waiting to be answered." action={<NavLink to="/analysis" className="button primary"><Sparkles size={16} /> Start an analysis</NavLink>} />
-      {!aiEnabled && <div className="mode-banner"><div className="mode-icon"><FlaskConical size={17} /></div><div><b>You’re in local demo mode</b><span>PDF extraction and lexical overlap are available. Configure a Gemini API key for evidence-grounded AI summaries, embedding similarity, and gap discovery.</span></div><NavLink to="/settings">Set up AI <ArrowRight size={14} /></NavLink></div>}
+      {!aiEnabled && <div className="mode-banner"><div className="mode-icon"><FlaskConical size={17} /></div><div><b>You’re in local demo mode</b><span>PDF extraction and lexical overlap are available. Configure a Groq API key for evidence-grounded AI summaries and gap discovery.</span></div><NavLink to="/settings">Set up AI <ArrowRight size={14} /></NavLink></div>}
       <section className="metric-grid">
         <Metric icon={<BookOpen size={17} />} label="Papers in library" value={papers.length.toString()} note={papers.length ? 'Ready to analyze' : 'Add your first paper'} color="blue" />
         <Metric icon={<Activity size={17} />} label="Analyses completed" value={analyses.length.toString()} note="Across your workspace" color="purple" />
@@ -472,7 +472,7 @@ function AssistantPage({ papers, aiEnabled }: { papers: Paper[]; aiEnabled: bool
   }
   return <>
     <PageHeading eyebrow="PAPER-GROUNDED CHAT" title="Research assistant" description="Ask questions about selected papers. Answers are generated from retrieved excerpts and show the passages used." action={<button className="button secondary" onClick={startNew}><MessageCircle size={15} /> New chat</button>} />
-    {!aiEnabled && <div className="mode-banner"><div className="mode-icon"><ShieldCheck size={17} /></div><div><b>AI assistant unavailable in local mode</b><span>Configure GEMINI_API_KEY on the backend to ask questions. The assistant will not produce demo answers.</span></div><NavLink to="/settings">Settings <ArrowRight size={14} /></NavLink></div>}
+    {!aiEnabled && <div className="mode-banner"><div className="mode-icon"><ShieldCheck size={17} /></div><div><b>AI assistant unavailable in local mode</b><span>Configure GROQ_API_KEY on the backend to ask questions. The assistant will not produce demo answers.</span></div><NavLink to="/settings">Settings <ArrowRight size={14} /></NavLink></div>}
     <div className="assistant-layout">
       <aside className="panel assistant-history"><div className="panel-heading"><h2>Conversations</h2><button className="icon-button" aria-label="Start new conversation" onClick={startNew}><Sparkles size={15} /></button></div>{threads.length ? threads.map((thread) => <div className="assistant-thread-row" key={thread.id}><button className={`assistant-thread ${conversation?.id === thread.id ? 'selected' : ''}`} onClick={() => openThread(thread)}><b>{thread.title}</b><small>{new Date(thread.updated_at).toLocaleString()}</small></button><button className="icon-button assistant-thread-delete" aria-label={`Delete conversation ${thread.title}`} onClick={() => void deleteThread(thread)}><Trash2 size={13} /></button></div>) : <p className="chart-empty">Your saved chats will appear here.</p>}</aside>
       <section className="panel assistant-chat">
@@ -704,7 +704,7 @@ function CustomAnalysis({ papers, projects, documents, onUploadDocuments, onAnal
 
 function Results({ analysis, onDownloadReport }: { analysis: Analysis; onDownloadReport: (id: string) => Promise<void> }) {
   const result = analysis.result
-  return <section className="results-block" id="analysis-results"><div className="results-title"><div><span className="eyebrow">ANALYSIS COMPLETE · {analysis.provider === 'gemini' ? 'GEMINI AI' : 'LOCAL MODE'}</span><h2>Analysis results</h2></div><button className="button secondary small-button" onClick={() => void onDownloadReport(analysis.id)}><ArrowDownToLine size={15} /> Download report</button></div>
+  return <section className="results-block" id="analysis-results"><div className="results-title"><div><span className="eyebrow">ANALYSIS COMPLETE · {analysis.provider === 'groq' ? 'GROQ AI' : 'LOCAL MODE'}</span><h2>Analysis results</h2></div><button className="button secondary small-button" onClick={() => void onDownloadReport(analysis.id)}><ArrowDownToLine size={15} /> Download report</button></div>
     {result.notice && <div className="result-notice"><ShieldCheck size={17} /><span>{result.notice}</span></div>}
     <div className="result-card"><h3>Executive summary</h3><p>{result.executive_summary}</p></div>
     {result.paper_summaries?.length > 0 && <div className="result-card"><h3>Individual paper summaries</h3>{result.paper_summaries.map((paper: any) => <div className="summary-row" key={paper.paper_id}><b>{paper.title}</b><p>{paper.summary}</p>{['objectives', 'methodology', 'datasets', 'results', 'limitations', 'future_work'].map((key) => paper[key] && paper[key] !== 'Not confidently extracted.' && <div className="summary-fact" key={key}><strong>{key.replace('_', ' ')}</strong><span>{paper[key]}</span></div>)}</div>)}</div>}
@@ -850,7 +850,7 @@ function GapDiscovery({ gaps, demoMode }: { gaps: any[]; demoMode: boolean }) {
       const title = String(gap.title || '').toLowerCase()
       return item === (title.includes('dataset') ? 'Dataset' : title.includes('method') ? 'Methodology' : title.includes('scale') ? 'Scalability' : title.includes('explain') ? 'Explainability' : title.includes('evaluat') ? 'Evaluation' : title.includes('future') ? 'Future work' : 'Other')
     }) || 'Other'}</span><b>{typeof gap.confidence === 'number' ? `${Math.round(gap.confidence * 100)}% confidence` : 'Candidate'}</b></div><h4>{gap.title || 'Potential gap'}</h4><p>{gap.description}</p>{gap.suggested_direction && <div className="gap-direction"><Sparkles size={13} /><div><b>Suggested direction</b><span>{gap.suggested_direction}</span></div></div>}<details className="gap-evidence-details"><summary>View evidence ({gap.evidence?.length || 0} sources)<ChevronDown size={14} /></summary>{gap.evidence?.map((evidence: any, evidenceIndex: number) => <blockquote key={`${evidence.paper_id}-${evidenceIndex}`}><p>“{evidence.excerpt}”</p><cite>{evidence.paper_title}{evidence.page_number ? ` · p. ${evidence.page_number}` : ''}</cite></blockquote>)}{gap.uncertainty && <p className="uncertainty"><b>Uncertainty:</b> {gap.uncertainty}</p>}{gap.counter_evidence?.length > 0 && <p className="gap-counter-evidence"><b>Counter-evidence:</b> {gap.counter_evidence.join(' ')}</p>}</details></article>)}</div></>}
-    {!gaps.length && <div className="no-gaps"><ShieldCheck size={18} /><span>{demoMode ? 'Research-gap discovery requires live Gemini analysis. No gaps were generated in local mode.' : 'No evidence-supported gaps were identified in the selected papers.'}</span></div>}
+    {!gaps.length && <div className="no-gaps"><ShieldCheck size={18} /><span>{demoMode ? 'Research-gap discovery requires live AI analysis. No gaps were generated in local mode.' : 'No evidence-supported gaps were identified in the selected papers.'}</span></div>}
   </section>
 }
 
@@ -937,7 +937,7 @@ function ResponsiveMiniChart({ data }: { data: { name: string; analyses: number 
 function ActivityRow({ analysis }: { analysis: Analysis }) {
   const count = analysis.result.paper_summaries?.length || 0
   const gaps = analysis.result.research_gaps?.length || 0
-  return <NavLink to={`/results/${analysis.id}`} className="activity-row"><div className="activity-icon"><FlaskConical size={16} /></div><div className="activity-copy"><b>{analysis.prompt}</b><span>{new Date(analysis.created_at).toLocaleString()} · {count} papers · {analysis.provider === 'gemini' ? 'Gemini' : 'Local mode'}</span></div><div className="activity-gaps">{gaps} {gaps === 1 ? 'gap' : 'gaps'}</div><ArrowRight size={15} className="activity-arrow" /></NavLink>
+  return <NavLink to={`/results/${analysis.id}`} className="activity-row"><div className="activity-icon"><FlaskConical size={16} /></div><div className="activity-copy"><b>{analysis.prompt}</b><span>{new Date(analysis.created_at).toLocaleString()} · {count} papers · {analysis.provider === 'groq' ? 'Groq' : 'Local mode'}</span></div><div className="activity-gaps">{gaps} {gaps === 1 ? 'gap' : 'gaps'}</div><ArrowRight size={15} className="activity-arrow" /></NavLink>
 }
 
 function ResultPage({ analyses, onDownloadReport }: { analyses: Analysis[]; onDownloadReport: (id: string) => Promise<void> }) {
@@ -955,20 +955,19 @@ function SettingsPage({ aiEnabled, userEmail, authenticated }: { aiEnabled: bool
         <div className="panel-heading"><div><span className="eyebrow">ACCOUNT</span><h2>{authenticated ? 'Google account' : 'Local workspace'}</h2></div><div className={`metric-icon ${authenticated ? 'green' : 'blue'}`}><ShieldCheck size={18} /></div></div>
         <div className="settings-detail-row"><span>Signed in as</span><b>{userEmail || 'Local account on this deployment'}</b></div>
         <div className="settings-detail-row"><span>Access mode</span><b>{authenticated ? 'Google sign-in and allowlist enabled' : 'Local account mode'}</b></div>
-        <div className="settings-detail-row"><span>AI provider</span><b>{aiEnabled ? 'Gemini configured on backend' : 'Local demo mode'}</b></div>
+        <div className="settings-detail-row"><span>AI provider</span><b>{aiEnabled ? 'Groq configured on backend' : 'Local demo mode'}</b></div>
         <div className="settings-divider" />
         <span className="eyebrow">PRIVACY & DATA</span>
-        <div className="security-callout"><ShieldCheck size={17} /><div><b>API credentials stay on the server</b><span>ResearchLens does not expose Gemini API keys to the browser. If Gemini is enabled, selected paper text is sent to the configured provider for analysis.</span></div></div>
+        <div className="security-callout"><ShieldCheck size={17} /><div><b>API credentials stay on the server</b><span>ResearchLens does not expose Groq API keys to the browser. If Groq is enabled, selected paper text is sent to the configured provider for analysis.</span></div></div>
         <ul className="settings-bullets"><li>Paper text and analysis results are stored in the configured database.</li><li>Uploaded PDF binaries are extracted during upload and are not retained by this service.</li><li>Deleting a paper removes it from the library; saved analysis reports remain part of analysis history.</li></ul>
       </section>
       <section className="panel config-card">
         <div className="tiny-icon"><Settings size={16} /></div><span className="eyebrow">SERVER CONFIGURATION</span><h2>Environment variables</h2>
-        <div className="config-row"><code>GEMINI_API_KEY</code><span>{aiEnabled ? 'Configured (value hidden)' : 'Not configured'}</span></div>
-        <div className="config-row"><code>GEMINI_MODEL</code><span>Set by backend operator</span></div>
-        <div className="config-row"><code>GEMINI_EMBEDDING_MODEL</code><span>Set by backend operator</span></div>
+        <div className="config-row"><code>GROQ_API_KEY</code><span>{aiEnabled ? 'Configured (value hidden)' : 'Not configured'}</span></div>
+        <div className="config-row"><code>GROQ_MODEL</code><span>Set by backend operator</span></div>
         <div className="config-row"><code>MAX_UPLOAD_MB</code><span>Backend default: 25 MB</span></div>
         <p className="config-footnote">For Render, update API variables in the Render service dashboard. For local development, update the root .env and restart the backend. Settings are intentionally read-only here so secrets cannot be changed through the browser.</p>
-        <a className="button secondary settings-link" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">Manage Gemini API key <ArrowRight size={14} /></a>
+        <a className="button secondary settings-link" href="https://console.groq.com/keys" target="_blank" rel="noreferrer">Manage Groq API key <ArrowRight size={14} /></a>
       </section>
     </div>
   </>
